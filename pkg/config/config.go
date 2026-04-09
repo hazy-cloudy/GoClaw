@@ -297,6 +297,7 @@ type ChannelsConfig struct {
 	PicoClient PicoClientConfig `json:"pico_client" yaml:"pico_client,omitempty"`
 	IRC        IRCConfig        `json:"irc"         yaml:"irc,omitempty"`
 	VK         VKConfig         `json:"vk"          yaml:"vk,omitempty"`
+	Pet        PetConfig        `json:"pet"         yaml:"pet,omitempty"`
 }
 
 // GroupTriggerConfig controls when the bot responds in group chats.
@@ -564,6 +565,16 @@ type VKConfig struct {
 
 func (c *VKConfig) SetToken(token string) {
 	c.Token = *NewSecureString(token)
+}
+
+// PetConfig 桌面宠通道配置
+type PetConfig struct {
+	Enabled       bool                `json:"enabled"                  yaml:"-"               env:"PICOCLAW_CHANNELS_PET_ENABLED"`
+	Host          string              `json:"host"                    yaml:"-"               env:"PICOCLAW_CHANNELS_PET_HOST"`
+	Port          int                 `json:"port"                    yaml:"-"               env:"PICOCLAW_CHANNELS_PET_PORT"`
+	AllowFrom     FlexibleStringSlice `json:"allow_from"              yaml:"-"               env:"PICOCLAW_CHANNELS_PET_ALLOW_FROM"`
+	AllowOrigins  []string            `json:"allow_origins,omitempty" yaml:"-"               env:"PICOCLAW_CHANNELS_PET_ALLOW_ORIGINS"`
+	WorkspacePath string              `json:"workspace_path,omitempty" yaml:"-"               env:"PICOCLAW_CHANNELS_PET_WORKSPACE_PATH"`
 }
 
 type HeartbeatConfig struct {
