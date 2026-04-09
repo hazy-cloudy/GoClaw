@@ -84,9 +84,7 @@ func (cb *ContextBuilder) getIdentity() string {
 	version := config.FormatVersion()
 
 	return fmt.Sprintf(
-		`# picoclaw 🦞 (%s)
-
-You are picoclaw, a helpful AI assistant.
+		`# clawPet  (%s)
 
 ## Workspace
 Your workspace is at: %s
@@ -439,21 +437,21 @@ func (cb *ContextBuilder) LoadBootstrapFiles() string {
 	var sb strings.Builder
 
 	agentDefinition := cb.LoadAgentDefinition()
-	if agentDefinition.Agent != nil {
-		label := string(agentDefinition.Source)
-		if label == "" {
-			label = relativeWorkspacePath(cb.workspace, agentDefinition.Agent.Path)
-		}
-		fmt.Fprintf(&sb, "## %s\n\n%s\n\n", label, agentDefinition.Agent.Body)
-	}
-	if agentDefinition.Soul != nil {
-		fmt.Fprintf(
-			&sb,
-			"## %s\n\n%s\n\n",
-			relativeWorkspacePath(cb.workspace, agentDefinition.Soul.Path),
-			agentDefinition.Soul.Content,
-		)
-	}
+	//if agentDefinition.Agent != nil {
+	//	label := string(agentDefinition.Source)
+	//	if label == "" {
+	//		label = relativeWorkspacePath(cb.workspace, agentDefinition.Agent.Path)
+	//	}
+	//	fmt.Fprintf(&sb, "## %s\n\n%s\n\n", label, agentDefinition.Agent.Body)
+	//}
+	//if agentDefinition.Soul != nil {
+	//	fmt.Fprintf(
+	//		&sb,
+	//		"## %s\n\n%s\n\n",
+	//		relativeWorkspacePath(cb.workspace, agentDefinition.Soul.Path),
+	//		agentDefinition.Soul.Content,
+	//	)
+	//}
 	if agentDefinition.User != nil {
 		fmt.Fprintf(&sb, "## %s\n\n%s\n\n", "USER.md", agentDefinition.User.Content)
 	}

@@ -25,6 +25,7 @@ import (
 	_ "github.com/sipeed/picoclaw/pkg/channels/line"
 	_ "github.com/sipeed/picoclaw/pkg/channels/maixcam"
 	_ "github.com/sipeed/picoclaw/pkg/channels/onebot"
+	_ "github.com/sipeed/picoclaw/pkg/channels/pet"
 	"github.com/sipeed/picoclaw/pkg/channels/pico"
 	_ "github.com/sipeed/picoclaw/pkg/channels/qq"
 	_ "github.com/sipeed/picoclaw/pkg/channels/slack"
@@ -41,6 +42,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/heartbeat"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/media"
+	"github.com/sipeed/picoclaw/pkg/pet"
 	"github.com/sipeed/picoclaw/pkg/pid"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/state"
@@ -184,6 +186,16 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 	runningServices, err := setupAndStartServices(cfg, agentLoop, msgBus, pidData.Token)
 	if err != nil {
 		return err
+	}
+
+	// 注册 Pet Character Hook 到 AgentLoop
+	// 这样角色人格信息会在每次 LLM 调用前注入到 system prompt
+	// 对所有 channel 生效（不仅是 pet channel）
+	if cfg.Channels.Pet.Enabled {
+		petCharacterStore := pet.GetCharacterStoreWithPath(cfg.WorkspacePath())
+		petCharacterHook := pet.NewCharacterHook(petCharacterStore)
+		agentLoop.MountHook(agent.NamedHook("pet_character", petCharacterHook))
+		logger.InfoCF("pet", "Pet character hook registered", nil)
 	}
 
 	// Setup manual reload channel for /reload endpoint
