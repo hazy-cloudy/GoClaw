@@ -247,6 +247,12 @@
         "enabled": false
       },
       "reasoning_channel_id": ""
+    },
+    "pet": {
+      "enabled": true,
+      "host": "0.0.0.0",
+      "port": 19943,
+      "allow_from": ["*"],
     }
   },
   "tools": {
