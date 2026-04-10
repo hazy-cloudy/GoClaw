@@ -2036,6 +2036,55 @@ turnLoop:
 				}
 				return fbResult.Response, nil
 			}
+
+			streamer, _ := al.bus.GetStreamer(providerCtx, ts.channel, ts.chatID)
+			usesStreaming := streamer != nil && iteration == 1
+
+			logger.DebugCF("agent", "Streaming check", map[string]any{
+				"streamer":      streamer != nil,
+				"channel":       ts.channel,
+				"chatID":        ts.chatID,
+				"iteration":     iteration,
+				"toolDefsCount": len(toolDefsForCall),
+				"providerType":  fmt.Sprintf("%T", activeProvider),
+				"usesStreaming": usesStreaming,
+			})
+
+			if usesStreaming {
+				if sp, ok := activeProvider.(providers.StreamingProvider); ok {
+					lastSentLen := 0
+					onChunk := func(chunk string) {
+						if len(chunk) > lastSentLen {
+							delta := chunk[lastSentLen:]
+							lastSentLen = len(chunk)
+							if streamer != nil && delta != "" {
+								if err := streamer.Update(providerCtx, delta); err != nil {
+									logger.WarnCF("agent", "Streamer.Update failed", map[string]any{
+										"error": err.Error(),
+									})
+								}
+							}
+						}
+					}
+					resp, err := sp.ChatStream(providerCtx, messagesForCall, toolDefsForCall, llmModel, llmOpts, onChunk)
+					if resp != nil && streamer != nil {
+						if err != nil {
+							streamer.Cancel(providerCtx)
+						} else {
+							if finalizeErr := streamer.Finalize(providerCtx, resp.Content); finalizeErr != nil {
+								logger.WarnCF("agent", "Streamer.Finalize failed", map[string]any{
+									"error": finalizeErr.Error(),
+								})
+							}
+						}
+					}
+					return resp, err
+				}
+				logger.DebugCF("agent", "Provider does not support streaming, falling back to Chat", map[string]any{
+					"provider": fmt.Sprintf("%T", activeProvider),
+				})
+			}
+
 			return activeProvider.Chat(providerCtx, messagesForCall, toolDefsForCall, llmModel, llmOpts)
 		}
 
