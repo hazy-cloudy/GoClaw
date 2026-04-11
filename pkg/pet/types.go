@@ -35,11 +35,13 @@ const (
 
 // PushType 推送类型
 const (
+	// PushType 推送类型
 	PushTypeAIChat        = "ai_chat"        // AI 聊天回复
 	PushTypeEmotionChange = "emotion_change" // 情绪变化
 	PushTypeActionTrigger = "action_trigger" // 动作触发
 	PushTypeInitStatus    = "init_status"    // 初始化状态（连接建立时推送）
 	PushTypeHeartbeat     = "heartbeat"      // 心跳保活
+	PushTypeAudio         = "audio"          // 音频播放
 )
 
 // =============================================================================
