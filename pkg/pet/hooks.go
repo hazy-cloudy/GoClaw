@@ -12,6 +12,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/pet/action"
 	"github.com/sipeed/picoclaw/pkg/pet/emotion"
 	"github.com/sipeed/picoclaw/pkg/providers"
+	"github.com/sipeed/picoclaw/pkg/tools"
 )
 
 // =============================================================================
@@ -125,12 +126,19 @@ func (h *LLMTagHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (
  4. MBTI用 [mbti:维度:字母]
     - 示例：[mbti:ie:i]
 
- 【示例对话】
- 用户说：你好呀
- 你的输出：
- [text:你好呀！很高兴见到你～]
- [emotion:joy:+5]
-  [mbti:ie:e]`,
+【输出格式要求】
+你必须使用以下格式回复用户：
+
+1. [text:你的回复内容] - 用于回复用户的内容
+2. [emotion:情绪名:+/-值] - 情绪变化
+3. [action:动作名] - 动作触发（可选，必须选择可用动作之一或者不选择任何动作）
+4. [mbti:维度:字母] - MBTI变化
+
+【示例对话】
+用户说：你好呀
+正确输出：[text:你好呀！很高兴见到你～][emotion:joy:+5][mbti:ie:e]
+错误输出：你好呀！（没有使用 [text:] 包裹）
+`,
 		emotions.Joy, emotions.Anger, emotions.Sadness, emotions.Disgust, emotions.Surprise, emotions.Fear,
 		mbti,
 		strings.Join(emotionList, ", "),
@@ -235,33 +243,60 @@ func (h *LLMTagHook) AfterLLM(ctx context.Context, resp *agent.LLMHookResponse) 
 	textTags := parseTextTags(content)
 	var finalText string
 	if len(textTags) > 0 {
-		// 从 [text:xxx] 标签提取文本
-		finalText = extractTextFromTags(content)
-		logger.InfoCF("pet", "LLMTagHook: 从 [text:] 标签提取文本", map[string]any{
-			"text_tags_count": len(textTags),
-			"final_text_preview": func() string {
-				if len(finalText) > 100 {
-					return finalText[:100] + "..."
-				}
-				return finalText
-			}(),
-		})
+		// LLM 使用了 [text:] 格式，保留完整标签
+		var sb strings.Builder
+		for _, tag := range textTags {
+			sb.WriteString("[text:")
+			sb.WriteString(tag.Text)
+			sb.WriteString("]")
+		}
+		finalText = sb.String()
 	} else {
-		// 没有正确格式的 [text:] 标签，清理所有已知标签格式
-		logger.InfoCF("pet", "LLMTagHook: 无有效 [text:] 标签，执行全面清理", nil)
-		finalText = cleanAllTags(content)
-		logger.InfoCF("pet", "LLMTagHook: 清理后文本", map[string]any{
-			"final_text_preview": func() string {
-				if len(finalText) > 100 {
-					return finalText[:100] + "..."
-				}
-				return finalText
-			}(),
-		})
+		// LLM 没有使用 [text:] 格式，强制包裹
+		cleaned := cleanAllTags(content)
+		if cleaned != "" {
+			finalText = "[text:" + cleaned + "]"
+		} else {
+			finalText = ""
+		}
 	}
 	resp.Response.Content = finalText
 
 	return resp, agent.HookDecision{Action: agent.HookActionContinue}, nil
+}
+
+// BeforeTool 工具执行前拦截
+// 通知客户端开始执行工具
+func (h *LLMTagHook) BeforeTool(ctx context.Context, call *agent.ToolCallHookRequest) (*agent.ToolCallHookRequest, agent.HookDecision, error) {
+	if call == nil || call.Tool == "" {
+		return call, agent.HookDecision{Action: agent.HookActionContinue}, nil
+	}
+
+	logger.InfoCF("pet", "LLMTagHook.BeforeTool: 工具执行开始", map[string]any{
+		"tool": call.Tool,
+		"args": call.Arguments,
+	})
+
+	h.pushToolExecStart(call.Tool, call.Arguments)
+
+	return call, agent.HookDecision{Action: agent.HookActionContinue}, nil
+}
+
+// AfterTool 工具执行后拦截
+// 通知客户端工具执行完成
+func (h *LLMTagHook) AfterTool(ctx context.Context, result *agent.ToolResultHookResponse) (*agent.ToolResultHookResponse, agent.HookDecision, error) {
+	if result == nil || result.Tool == "" {
+		return result, agent.HookDecision{Action: agent.HookActionContinue}, nil
+	}
+
+	logger.InfoCF("pet", "LLMTagHook.AfterTool: 工具执行完成", map[string]any{
+		"tool":     result.Tool,
+		"duration": result.Duration.String(),
+	})
+
+	h.pushToolExecEnd(result.Tool, result.Result)
+
+	return result, agent.HookDecision{Action: agent.HookActionContinue}, nil
 }
 
 // =============================================================================
@@ -328,6 +363,73 @@ func (h *LLMTagHook) pushEmotionChange(push emotion.EmotionPush) {
 		PushType: "emotion_change",
 		Data:     data,
 	})
+}
+
+// pushToolExecStart 推送工具开始执行
+// 参数：
+//   - tool: 工具名称
+//   - args: 工具参数
+//
+// 推送格式：
+//
+//	{
+//	  "type": "push",
+//	  "push_type": "ai_chat",
+//	  "data": {
+//	    "chat_id": 1,
+//	    "type": "tool",
+//	    "text": "正在调用 get_weather"
+//	  },
+//	  "timestamp": 1712610000,
+//	  "is_final": true
+//	}
+func (h *LLMTagHook) pushToolExecStart(tool string, args map[string]any) {
+	if h.petService == nil {
+		return
+	}
+
+	data, _ := json.Marshal(map[string]interface{}{
+		"type":  "tool",
+		"text":  "正在调用 " + tool,
+		"tool":  tool,
+		"args":  args,
+		"phase": "start",
+	})
+
+	h.petService.PushToolStart(tool, data)
+}
+
+// pushToolExecEnd 推送工具执行完成
+// 参数：
+//   - tool: 工具名称
+//   - result: 工具执行结果
+//
+// 推送格式：
+//
+//	{
+//	  "type": "push",
+//	  "push_type": "ai_chat",
+//	  "data": {
+//	    "chat_id": 1,
+//	    "type": "tool",
+//	    "text": "get_weather 执行完成"
+//	  },
+//	  "timestamp": 1712610000,
+//	  "is_final": true
+//	}
+func (h *LLMTagHook) pushToolExecEnd(tool string, result *tools.ToolResult) {
+	if h.petService == nil {
+		return
+	}
+
+	data, _ := json.Marshal(map[string]interface{}{
+		"type":  "tool",
+		"text":  tool + " 执行完成",
+		"tool":  tool,
+		"phase": "end",
+	})
+
+	h.petService.PushToolEnd(tool, data)
 }
 
 // =============================================================================
