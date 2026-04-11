@@ -395,12 +395,12 @@ func (c *PetChannel) BeginStream(ctx context.Context, sessionID string) (channel
 
 // Update 发送增量内容到客户端，使用状态机解析标签
 func (s *petStreamer) Update(ctx context.Context, content string) error {
-	logger.DebugCF("pet", "Update called", map[string]any{
-		"content":    content,
-		"inTextTag":  s.inTextTag,
-		"inOtherTag": s.inOtherTag,
-		"buffer":     s.buffer,
-	})
+	//logger.DebugCF("pet", "Update called", map[string]any{
+	//	"content":    content,
+	//	"inTextTag":  s.inTextTag,
+	//	"inOtherTag": s.inOtherTag,
+	//	"buffer":     s.buffer,
+	//})
 	if s == nil || s.channel == nil {
 		return nil
 	}
