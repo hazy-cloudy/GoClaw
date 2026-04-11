@@ -25,7 +25,7 @@ import (
 	_ "github.com/sipeed/picoclaw/pkg/channels/line"
 	_ "github.com/sipeed/picoclaw/pkg/channels/maixcam"
 	_ "github.com/sipeed/picoclaw/pkg/channels/onebot"
-	_ "github.com/sipeed/picoclaw/pkg/channels/pet"
+	petchannel "github.com/sipeed/picoclaw/pkg/channels/pet"
 	"github.com/sipeed/picoclaw/pkg/channels/pico"
 	_ "github.com/sipeed/picoclaw/pkg/channels/qq"
 	_ "github.com/sipeed/picoclaw/pkg/channels/slack"
@@ -196,6 +196,16 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 		petCharacterHook := pet.NewCharacterHook(petCharacterStore)
 		agentLoop.MountHook(agent.NamedHook("pet_character", petCharacterHook))
 		logger.InfoCF("pet", "Pet character hook registered", nil)
+
+		// 注册 Pet LLM Tag Hook 到 AgentLoop
+		// 用于解析LLM输出中的情绪、动作、MBTI标签
+		if petChannel, ok := runningServices.ChannelManager.GetChannel("pet"); ok {
+			if pc, ok := petChannel.(*petchannel.PetChannel); ok {
+				petLLMTagHook := pet.NewLLMTagHook(pc.Service().EmotionEngine(), pc.Service().ActionManager(), pc.Service())
+				agentLoop.MountHook(agent.NamedHook("pet_llm_tag", petLLMTagHook))
+				logger.InfoCF("pet", "Pet LLM tag hook registered", nil)
+			}
+		}
 	}
 
 	// Setup manual reload channel for /reload endpoint

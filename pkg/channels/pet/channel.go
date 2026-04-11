@@ -5,11 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/gorilla/websocket"
 	"net/http"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
-
-	"github.com/gorilla/websocket"
 
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/channels"
@@ -97,6 +98,7 @@ func NewPetChannel(cfg config.PetConfig, msgBus *bus.MessageBus, workspacePath s
 		WorkspacePath: workspacePath,
 	})
 	pc.service.SetPushHandler(pc.handleServicePush)
+	pc.service.Start()
 
 	logger.Infof("pet: created PetChannel with config: %v", cfg)
 
@@ -118,6 +120,11 @@ func (c *PetChannel) handleServicePush(push any) {
 // Name 通道名称
 func (c *PetChannel) Name() string {
 	return "pet"
+}
+
+// Service 返回 PetService 实例，供 LLMTagHook 等组件访问情绪引擎和动作管理器
+func (c *PetChannel) Service() *pet.PetService {
+	return c.service
 }
 
 // Start 启动通道
@@ -359,4 +366,292 @@ func mustMarshal(v interface{}) json.RawMessage {
 		return json.RawMessage(`{"error": "marshal error"}`)
 	}
 	return data
+}
+
+// petStreamer 实现流式输出，通过WebSocket发送增量内容
+type petStreamer struct {
+	channel   *PetChannel
+	sessionID string
+	lastLen   int
+	buffer    string
+	chatID    int64
+
+	// 状态机相关
+	textBuffer  strings.Builder // 收集 [text:] 中的文本
+	tagBuffer   strings.Builder // 收集其他标签内容
+	inTextTag   bool            // 是否在 [text:...] 标签内
+	inOtherTag  bool            // 是否在其他标签内（如 [emotion:...]）
+	pendingText string          // 已收集待发送的文本（遇到标签前的）
+}
+
+// BeginStream 实现StreamingCapable接口
+func (c *PetChannel) BeginStream(ctx context.Context, sessionID string) (channels.Streamer, error) {
+	return &petStreamer{
+		channel:   c,
+		sessionID: sessionID,
+		chatID:    0,
+	}, nil
+}
+
+// Update 发送增量内容到客户端，使用状态机解析标签
+func (s *petStreamer) Update(ctx context.Context, content string) error {
+	logger.DebugCF("pet", "Update called", map[string]any{
+		"content":    content,
+		"inTextTag":  s.inTextTag,
+		"inOtherTag": s.inOtherTag,
+		"buffer":     s.buffer,
+	})
+	if s == nil || s.channel == nil {
+		return nil
+	}
+
+	s.lastLen = len(content)
+	s.buffer += content
+
+	// 使用状态机解析，收集文本后批量发送
+	var textBuilder strings.Builder
+	sendPending := func() {
+		if textBuilder.Len() > 0 {
+			s.chatID++
+			s.channel.sendStreamChunk(s.sessionID, s.chatID, "text", textBuilder.String(), false)
+			textBuilder.Reset()
+		}
+	}
+
+	if len(s.buffer) > 0 {
+		if s.inTextTag {
+			if strings.Contains(s.buffer, "]") {
+				s.inTextTag = false
+				i := strings.Index(s.buffer, "]")
+				s.buffer = s.buffer[:i]
+				textBuilder.WriteString(s.buffer)
+				s.buffer = ""
+			} else {
+				s.textBuffer.WriteString(s.buffer)
+				s.buffer = ""
+			}
+		} else if strings.Contains(s.buffer, "[text:") {
+			s.inTextTag = true
+			i := strings.Index(s.buffer, "[text:")
+			s.buffer = s.buffer[i+6:]
+			textBuilder.WriteString(s.buffer)
+			s.buffer = ""
+		}
+	}
+	sendPending()
+
+	return nil
+}
+
+// Finalize 发送最终完成标记
+// 注意：不再发送重复文本，只发送情绪状态汇总
+func (s *petStreamer) Finalize(ctx context.Context, content string) error {
+
+	logger.DebugCF("pet", "Finalize called", map[string]any{
+		"content": content,
+	})
+
+	if s == nil || s.channel == nil {
+		return nil
+	}
+
+	// 清空状态，不发送任何文本
+	s.buffer = ""
+	s.textBuffer.Reset()
+	s.tagBuffer.Reset()
+	s.inTextTag = false
+	s.inOtherTag = false
+
+	// 发送最终状态块（带情绪状态）
+	s.chatID++
+	s.channel.sendStreamChunk(s.sessionID, s.chatID, "final", "", true)
+
+	return nil
+}
+
+// Cancel 取消流式输出
+func (s *petStreamer) Cancel(ctx context.Context) {
+}
+
+// findSegment 查找第一个完整的段落（以换行或句号结尾）
+// 返回: 段落内容, 剩余内容, 是否找到
+func (s *petStreamer) findSegment(buffer string) (string, string, bool) {
+	runes := []rune(buffer)
+	for i := len(runes) - 1; i >= 0; i-- {
+		c := runes[i]
+		if c == '\n' || c == '.' {
+			segment := string(runes[:i+1])
+			remaining := string(runes[i+1:])
+			return segment, remaining, true
+		}
+	}
+	return "", buffer, false
+}
+
+// cleanSegment 清理段落，去除纯空白、无用符号和标签
+func (s *petStreamer) cleanSegment(segment string) string {
+	// 先移除所有标签
+	segment = cleanStreamTags(segment)
+
+	runes := []rune(segment)
+	cleaned := make([]rune, 0, len(runes))
+
+	for i, r := range runes {
+		if r == '\n' {
+			hasTextBefore := false
+			for j := 0; j < i; j++ {
+				if !isWhitespace(runes[j]) {
+					hasTextBefore = true
+					break
+				}
+			}
+			if !hasTextBefore {
+				continue
+			}
+		}
+		cleaned = append(cleaned, r)
+	}
+
+	result := string(cleaned)
+	result = removeTrailingDots(result)
+	return strings.TrimRight(result, " \t")
+}
+
+// cleanStreamTags 清理流式输出中的所有标签
+func cleanStreamTags(content string) string {
+	// 匹配所有 [xxx:yyy] 或 [xxx] 格式的标签
+	tagPattern := regexp.MustCompile(`\[[^\]]+\]`)
+	content = tagPattern.ReplaceAllString(content, "")
+
+	// 清理多余的空行
+	emptyLinePattern := regexp.MustCompile(`\n{3,}`)
+	content = emptyLinePattern.ReplaceAllString(content, "\n\n")
+
+	return strings.TrimSpace(content)
+}
+
+// isWhitespace 检查是否为空白字符
+func isWhitespace(r rune) bool {
+	return r == ' ' || r == '\t' || r == '\n' || r == '\r'
+}
+
+// removeTrailingDots 去除末尾连续的句号（后面无文字时）
+func removeTrailingDots(s string) string {
+	runes := []rune(s)
+	for len(runes) > 1 && runes[len(runes)-1] == '.' {
+		runes = runes[:len(runes)-1]
+	}
+	return string(runes)
+}
+
+// detectContentType 根据内容前缀判断类型
+func detectContentType(text string) string {
+	text = strings.TrimSpace(text)
+	if strings.HasPrefix(text, "```go") || strings.HasPrefix(text, "```golang") {
+		return "go"
+	}
+	if strings.HasPrefix(text, "```json") {
+		return "json"
+	}
+	if strings.HasPrefix(text, "```python") || strings.HasPrefix(text, "```py") {
+		return "python"
+	}
+	if strings.HasPrefix(text, "```javascript") || strings.HasPrefix(text, "```js") {
+		return "javascript"
+	}
+	if strings.HasPrefix(text, "```typescript") || strings.HasPrefix(text, "```ts") {
+		return "typescript"
+	}
+	if strings.HasPrefix(text, "```html") {
+		return "html"
+	}
+	if strings.HasPrefix(text, "```css") {
+		return "css"
+	}
+	if strings.HasPrefix(text, "```sql") {
+		return "sql"
+	}
+	if strings.HasPrefix(text, "```bash") || strings.HasPrefix(text, "```sh") {
+		return "bash"
+	}
+	if strings.HasPrefix(text, "```xml") {
+		return "xml"
+	}
+	if strings.HasPrefix(text, "```yaml") || strings.HasPrefix(text, "```yml") {
+		return "yaml"
+	}
+	if strings.HasPrefix(text, "```markdown") || strings.HasPrefix(text, "```md") {
+		return "markdown"
+	}
+	if strings.HasPrefix(text, "```") {
+		return "code"
+	}
+	return "text"
+}
+
+// sendStreamChunk 发送流式数据块
+func (c *PetChannel) sendStreamChunk(sessionID string, chatID int64, contentType, text string, isFinal bool) {
+	c.connsMu.RLock()
+	defer c.connsMu.RUnlock()
+
+	var emotion, act string
+	if c.service != nil {
+		emotion, _ = c.service.EmotionEngine().GetDominantEmotion()
+	}
+
+	streamData := StreamData{
+		ChatID:      chatID,
+		ContentType: contentType,
+		Text:        text,
+		Emotion:     emotion,
+		Action:      act,
+	}
+
+	for connID, pc := range c.connections {
+		if pc.sessionID == sessionID || sessionID == "broadcast" {
+			pc.writeJSON(PetStreamResponse{
+				Type:      "push",
+				PushType:  "ai_chat",
+				Data:      streamData,
+				IsFinal:   isFinal,
+				Timestamp: time.Now().Unix(),
+			})
+			_ = connID
+		}
+	}
+}
+
+// sendResponse 发送普通响应
+func (c *PetChannel) sendResponse(sessionID string, action string, data map[string]interface{}) {
+	c.connsMu.RLock()
+	defer c.connsMu.RUnlock()
+
+	for connID, pc := range c.connections {
+		if pc.sessionID == sessionID || sessionID == "broadcast" {
+			pc.writeJSON(Response{
+				Status: pet.StatusOK,
+				Action: action,
+				Data:   mustMarshal(data),
+			})
+			_ = connID
+		}
+	}
+}
+
+// StreamData 流式数据内容
+type StreamData struct {
+	ChatID      int64  `json:"chat_id"`
+	ContentType string `json:"type"`
+	Text        string `json:"text"`
+	Emotion     string `json:"emotion,omitempty"`
+	Action      string `json:"action,omitempty"`
+}
+
+// PetStreamResponse 流式响应结构
+type PetStreamResponse struct {
+	Type      string     `json:"type"`
+	PushType  string     `json:"push_type"`
+	Data      StreamData `json:"data"`
+	IsFinal   bool       `json:"is_final"`
+	Timestamp int64      `json:"timestamp"`
 }
