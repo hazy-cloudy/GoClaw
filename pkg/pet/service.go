@@ -124,6 +124,54 @@ func (s *PetService) Push(push any) {
 	}
 }
 
+// PushToolStart 推送工具开始执行
+func (s *PetService) PushToolStart(tool string, data json.RawMessage) {
+	if s.pushHandler == nil {
+		return
+	}
+
+	streamData := map[string]interface{}{
+		"type":  "tool",
+		"text":  "正在调用 " + tool,
+		"tool":  tool,
+		"phase": "start",
+	}
+
+	push := map[string]interface{}{
+		"type":      "push",
+		"push_type": "ai_chat",
+		"data":      streamData,
+		"timestamp": time.Now().Unix(),
+		"is_final":  true,
+	}
+
+	s.pushHandler(push)
+}
+
+// PushToolEnd 推送工具执行完成
+func (s *PetService) PushToolEnd(tool string, data json.RawMessage) {
+	if s.pushHandler == nil {
+		return
+	}
+
+	streamData := map[string]interface{}{
+		"type":  "tool",
+		"text":  tool + " 执行完成",
+		"tool":  tool,
+		"phase": "end",
+	}
+
+	push := map[string]interface{}{
+		"type":      "push",
+		"push_type": "ai_chat",
+		"data":      streamData,
+		"timestamp": time.Now().Unix(),
+		"is_final":  true,
+	}
+
+	s.pushHandler(push)
+}
+
 func (s *PetService) RegisterSession(connID, sessionID string) {
 	s.mu.Lock()
 	s.connSessions[connID] = sessionID
