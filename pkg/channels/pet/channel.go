@@ -408,13 +408,11 @@ func (s *petStreamer) Update(ctx context.Context, content string) error {
 	s.lastLen = len(content)
 	s.buffer += content
 
-	// 使用状态机解析，收集文本后批量发送
-	var textBuilder strings.Builder
 	sendPending := func() {
-		if textBuilder.Len() > 0 {
+		if len(s.buffer) > 0 {
 			s.chatID++
-			s.channel.sendStreamChunk(s.sessionID, s.chatID, "text", textBuilder.String(), false)
-			textBuilder.Reset()
+			s.channel.sendStreamChunk(s.sessionID, s.chatID, "text", s.buffer, false)
+			s.buffer = ""
 		}
 	}
 
@@ -424,21 +422,15 @@ func (s *petStreamer) Update(ctx context.Context, content string) error {
 				s.inTextTag = false
 				i := strings.Index(s.buffer, "]")
 				s.buffer = s.buffer[:i]
-				textBuilder.WriteString(s.buffer)
-				s.buffer = ""
-			} else {
-				s.textBuffer.WriteString(s.buffer)
-				s.buffer = ""
 			}
+			sendPending()
 		} else if strings.Contains(s.buffer, "[text:") {
 			s.inTextTag = true
 			i := strings.Index(s.buffer, "[text:")
 			s.buffer = s.buffer[i+6:]
-			textBuilder.WriteString(s.buffer)
-			s.buffer = ""
+			sendPending()
 		}
 	}
-	sendPending()
 
 	return nil
 }
