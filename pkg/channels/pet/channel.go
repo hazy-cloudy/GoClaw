@@ -283,6 +283,7 @@ func (c *PetChannel) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	c.connsMu.Unlock()
 
 	c.service.RegisterSession(pc.id, sessionID)
+	c.service.PushInitStatus(sessionID)
 
 	logger.Infof("pet: client connected, conn_id=%s, session=%s", pc.id, sessionID)
 
