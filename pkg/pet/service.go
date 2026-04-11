@@ -215,7 +215,7 @@ func (s *PetService) PushInitStatus(sessionID string) {
 			JP: personality.JP,
 		}
 		emotions := s.emotionEngine.GetEmotions()
-		dominantEmotion, _ := s.emotionEngine.GetDominantEmotion()
+		dominantEmotion, emotionScore := s.emotionEngine.GetDominantEmotion()
 		emotionState = EmotionState{
 			PetID:       char.PetID,
 			Emotion:     dominantEmotion,
@@ -225,7 +225,7 @@ func (s *PetService) PushInitStatus(sessionID string) {
 			Disgust:     emotions.Disgust,
 			Surprise:    emotions.Surprise,
 			Fear:        emotions.Fear,
-			Description: emotionToDescription(dominantEmotion),
+			Description: GetEmotionDescription(dominantEmotion, emotionScore),
 		}
 	} else {
 		mbti = DefaultMBTI()
@@ -412,7 +412,7 @@ func (s *PetService) handleConfigUpdate(sessionID string, req Request) error {
 
 func (s *PetService) handleEmotionGet(sessionID string, req Request) error {
 	emotions := s.emotionEngine.GetEmotions()
-	dominantEmotion, _ := s.emotionEngine.GetDominantEmotion()
+	dominantEmotion, emotionScore := s.emotionEngine.GetDominantEmotion()
 
 	var petID string
 	if s.characterStore != nil {
@@ -431,7 +431,7 @@ func (s *PetService) handleEmotionGet(sessionID string, req Request) error {
 		Disgust:     emotions.Disgust,
 		Surprise:    emotions.Surprise,
 		Fear:        emotions.Fear,
-		Description: emotionToDescription(dominantEmotion),
+		Description: GetEmotionDescription(dominantEmotion, emotionScore),
 	}
 	return s.sendResponse(sessionID, req.Action, emo)
 }
@@ -443,20 +443,44 @@ func (s *PetService) handleHealthCheck(sessionID string, req Request) error {
 	})
 }
 
-func emotionToDescription(emotion string) string {
-	descriptions := map[string]string{
-		"neutral":  "平静",
-		"joy":      "开心",
-		"anger":    "愤怒",
-		"sadness":  "悲伤",
-		"disgust":  "厌恶",
-		"surprise": "惊讶",
-		"fear":     "恐惧",
+// EmotionDescriptions 情绪描述映射表
+// 索引：0=<20, 1=20-50, 2=50-80, 3=>80
+var EmotionDescriptions = map[string][]string{
+	"joy":      {"很不开心", "有点不开心", "有点开心", "很开心"},
+	"sadness":  {"很平静", "有点难过", "比较难过", "非常难过"},
+	"anger":    {"很平静", "有点生气", "比较生气", "非常生气"},
+	"fear":     {"很平静", "有点害怕", "比较害怕", "非常害怕"},
+	"disgust":  {"很平静", "有点厌恶", "比较厌恶", "非常厌恶"},
+	"surprise": {"很平静", "有点惊讶", "比较惊讶", "非常惊讶"},
+}
+
+func scoreToIndex(score int) int {
+	switch {
+	case score < 20:
+		return 0
+	case score < 50:
+		return 1
+	case score < 80:
+		return 2
+	default:
+		return 3
 	}
-	if desc, ok := descriptions[emotion]; ok {
-		return desc
+}
+
+// GetEmotionDescription 根据情绪名称和分数返回描述
+func GetEmotionDescription(emotion string, score int) string {
+	// 中性情绪直接返回平静
+	if emotion == "neutral" || score == 50 {
+		return "平静"
 	}
-	return "平静"
+
+	descriptions, ok := EmotionDescriptions[emotion]
+	if !ok {
+		return "平静"
+	}
+
+	idx := scoreToIndex(score)
+	return descriptions[idx]
 }
 
 func (s *PetService) sendResponse(sessionID, action string, data interface{}) error {
