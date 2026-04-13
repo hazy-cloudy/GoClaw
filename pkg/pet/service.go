@@ -9,7 +9,10 @@ import (
 
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/pet/action"
-	"github.com/sipeed/picoclaw/pkg/pet/emotion"
+	"github.com/sipeed/picoclaw/pkg/pet/characters"
+	"github.com/sipeed/picoclaw/pkg/pet/config"
+	"github.com/sipeed/picoclaw/pkg/pet/memory"
+	"github.com/sipeed/picoclaw/pkg/pet/voice"
 )
 
 type PushHandler func(push any)
@@ -19,9 +22,11 @@ type PetService struct {
 	config      PetServiceConfig
 	pushHandler PushHandler
 
-	characterStore *CharacterStore
-	emotionEngine  *emotion.EmotionEngine
-	actionManager  *action.ActionManager
+	configLoader  *config.ConfigLoader
+	charManager   *characters.Manager
+	actionManager *action.ActionManager
+	memoryStore   *memory.Store
+	voiceLoader   *voice.Loader
 
 	appConfig    AppConfig
 	connSessions map[string]string
@@ -37,12 +42,11 @@ type PetServiceConfig struct {
 	WorkspacePath string
 }
 
-func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) *PetService {
+func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &PetService{
 		msgBus:        msgBus,
 		config:        cfg,
-		emotionEngine: emotion.NewEmotionEngine(cfg.WorkspacePath),
 		actionManager: action.NewActionManager(cfg.WorkspacePath),
 		appConfig:     AppConfig{EmotionEnabled: true, ReminderEnabled: true, ProactiveCare: true, Language: "zh-CN"},
 		connSessions:  make(map[string]string),
@@ -51,13 +55,28 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) *PetService {
 	}
 
 	if cfg.WorkspacePath != "" {
-		s.characterStore = GetCharacterStoreWithPath(cfg.WorkspacePath)
-		if err := s.characterStore.Load(); err != nil {
-			fmt.Printf("pet: failed to load character: %v\n", err)
+		s.configLoader = config.NewConfigLoader(cfg.WorkspacePath)
+		if err := s.configLoader.Load(); err != nil {
+			fmt.Printf("pet: failed to load config: %v\n", err)
+			return nil, err
 		}
 
-		if err := s.emotionEngine.Load(); err != nil {
-			fmt.Printf("pet: failed to load emotion state: %v\n", err)
+		charCfg := s.configLoader.GetCharacters()
+		var err error
+		s.charManager, err = characters.NewManager(charCfg)
+		if err != nil {
+			fmt.Printf("pet: failed to create character manager: %v\n", err)
+			return nil, err
+		}
+
+		s.voiceLoader = voice.NewLoader(s.configLoader.GetVoice())
+		if err := s.voiceLoader.Load(); err != nil {
+			fmt.Printf("pet: failed to load voice: %v\n", err)
+		}
+
+		s.memoryStore, err = memory.NewStore(cfg.WorkspacePath)
+		if err != nil {
+			fmt.Printf("pet: failed to create memory store: %v\n", err)
 		}
 
 		if err := s.actionManager.Load(); err != nil {
@@ -65,17 +84,15 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) *PetService {
 		}
 	}
 
-	return s
+	return s, nil
 }
 
-// Start 启动 PetService，定时执行情绪衰减
 func (s *PetService) Start() {
 	s.decayTicker = time.NewTicker(5 * time.Second)
 	go s.runEmotionDecay()
 	fmt.Println("pet: PetService started, emotion decay ticker running")
 }
 
-// runEmotionDecay 定时执行情绪衰减
 func (s *PetService) runEmotionDecay() {
 	for {
 		select {
@@ -83,15 +100,16 @@ func (s *PetService) runEmotionDecay() {
 			fmt.Println("pet: emotion decay ticker stopped")
 			return
 		case <-s.decayTicker.C:
-			s.emotionEngine.ApplyDecay(5 * time.Second)
-			if shouldPush, push := s.emotionEngine.ShouldPush(); shouldPush {
-				s.Push(push)
+			if char := s.charManager.GetCurrent(); char != nil {
+				char.GetEmotionEngine().ApplyDecay(5 * time.Second)
+				if shouldPush, push := char.GetEmotionEngine().ShouldPush(); shouldPush {
+					s.Push(push)
+				}
 			}
 		}
 	}
 }
 
-// Stop 停止 PetService
 func (s *PetService) Stop() {
 	if s.cancel != nil {
 		s.cancel()
@@ -99,19 +117,30 @@ func (s *PetService) Stop() {
 	if s.decayTicker != nil {
 		s.decayTicker.Stop()
 	}
+	if s.memoryStore != nil {
+		s.memoryStore.Close()
+	}
 	fmt.Println("pet: PetService stopped")
 }
 
-func (s *PetService) CharacterStore() *CharacterStore {
-	return s.characterStore
+func (s *PetService) ConfigLoader() *config.ConfigLoader {
+	return s.configLoader
 }
 
-func (s *PetService) EmotionEngine() *emotion.EmotionEngine {
-	return s.emotionEngine
+func (s *PetService) CharManager() *characters.Manager {
+	return s.charManager
 }
 
 func (s *PetService) ActionManager() *action.ActionManager {
 	return s.actionManager
+}
+
+func (s *PetService) MemoryStore() *memory.Store {
+	return s.memoryStore
+}
+
+func (s *PetService) VoiceLoader() *voice.Loader {
+	return s.voiceLoader
 }
 
 func (s *PetService) SetPushHandler(handler PushHandler) {
@@ -124,7 +153,6 @@ func (s *PetService) Push(push any) {
 	}
 }
 
-// PushToolStart 推送工具开始执行
 func (s *PetService) PushToolStart(tool string, data json.RawMessage) {
 	if s.pushHandler == nil {
 		return
@@ -148,7 +176,6 @@ func (s *PetService) PushToolStart(tool string, data json.RawMessage) {
 	s.pushHandler(push)
 }
 
-// PushToolEnd 推送工具执行完成
 func (s *PetService) PushToolEnd(tool string, data json.RawMessage) {
 	if s.pushHandler == nil {
 		return
@@ -190,34 +217,34 @@ func (s *PetService) GetSessionByConnID(connID string) string {
 	return s.connSessions[connID]
 }
 
-// PushInitStatus 推送初始化状态
 func (s *PetService) PushInitStatus(sessionID string) {
-	needConfig := s.characterStore == nil || !s.characterStore.IsOnboardingComplete()
+	char := s.charManager.GetCurrent()
 
 	var character *CharacterConfig
 	var mbti MBTIConfig
 	var emotionState EmotionState
 
-	if !needConfig && s.characterStore != nil {
-		char := s.characterStore.Get()
+	if char != nil {
+		emotions := char.GetEmotions()
+		mbtiCfg := char.GetMBTI()
+		emoEngine := char.GetEmotionEngine()
+		dominantEmotion, emotionScore := emoEngine.GetDominantEmotion()
+
 		character = &CharacterConfig{
-			PetID:          char.PetID,
+			PetID:          char.ID,
 			PetName:        char.Name,
 			PetPersona:     char.Persona,
 			PetPersonaType: char.PersonaType,
 			Avatar:         char.Avatar,
 		}
-		personality := s.emotionEngine.GetPersonality()
 		mbti = MBTIConfig{
-			IE: personality.IE,
-			SN: personality.SN,
-			TF: personality.TF,
-			JP: personality.JP,
+			IE: mbtiCfg.IE,
+			SN: mbtiCfg.SN,
+			TF: mbtiCfg.TF,
+			JP: mbtiCfg.JP,
 		}
-		emotions := s.emotionEngine.GetEmotions()
-		dominantEmotion, emotionScore := s.emotionEngine.GetDominantEmotion()
 		emotionState = EmotionState{
-			PetID:       char.PetID,
+			PetID:       char.ID,
 			Emotion:     dominantEmotion,
 			Joy:         emotions.Joy,
 			Anger:       emotions.Anger,
@@ -243,8 +270,8 @@ func (s *PetService) PushInitStatus(sessionID string) {
 	}
 
 	s.sendPush(sessionID, PushTypeInitStatus, InitStatusPush{
-		NeedConfig:   needConfig,
-		HasCharacter: !needConfig,
+		NeedConfig:   char == nil,
+		HasCharacter: char != nil,
 		Character:    character,
 		MBTI:         mbti,
 		EmotionState: emotionState,
@@ -263,6 +290,8 @@ func (s *PetService) HandleRequest(connID string, req Request) error {
 		return s.handleCharacterGet(sessionID, req)
 	case ActionCharacterUpdate:
 		return s.handleCharacterUpdate(sessionID, req)
+	case ActionCharacterSwitch:
+		return s.handleCharacterSwitch(sessionID, req)
 	case ActionConfigGet:
 		return s.handleConfigGet(sessionID, req)
 	case ActionConfigUpdate:
@@ -302,35 +331,31 @@ func (s *PetService) handleOnboardingConfig(sessionID string, req Request) error
 		return s.sendError(sessionID, req.Action, "invalid onboarding config data")
 	}
 
-	if s.characterStore != nil {
-		char := &Character{
-			Name:        data.PetName,
-			Persona:     data.PetPersona,
-			PersonaType: data.PetPersonaType,
-			Avatar:      "default",
-		}
-		if err := s.characterStore.Update(char); err != nil {
+	char := s.charManager.GetCurrent()
+	if char != nil {
+		char.Name = data.PetName
+		char.Persona = data.PetPersona
+		char.PersonaType = data.PetPersonaType
+		if err := s.configLoader.SaveCharacters(); err != nil {
 			return s.sendError(sessionID, req.Action, err.Error())
 		}
 	}
 
-	return s.sendResponse(sessionID, req.Action, OnboardingConfigResponse{PetID: "pet_001"})
+	return s.sendResponse(sessionID, req.Action, OnboardingConfigResponse{PetID: char.ID})
 }
 
 func (s *PetService) handleCharacterGet(sessionID string, req Request) error {
-	if s.characterStore == nil {
-		return s.sendError(sessionID, req.Action, "character store not available")
+	char := s.charManager.GetCurrent()
+	if char == nil {
+		return s.sendError(sessionID, req.Action, "no active character")
 	}
 
-	char := s.characterStore.Get()
 	charConfig := CharacterConfig{
-		PetID:          char.PetID,
+		PetID:          char.ID,
 		PetName:        char.Name,
 		PetPersona:     char.Persona,
 		PetPersonaType: char.PersonaType,
 		Avatar:         char.Avatar,
-		CreatedAt:      char.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:      char.UpdatedAt.Format(time.RFC3339),
 	}
 	return s.sendResponse(sessionID, req.Action, charConfig)
 }
@@ -341,20 +366,45 @@ func (s *PetService) handleCharacterUpdate(sessionID string, req Request) error 
 		return s.sendError(sessionID, req.Action, "invalid character data")
 	}
 
-	if s.characterStore != nil {
-		char := &Character{
-			Name:        data.PetName,
-			Persona:     data.PetPersona,
-			PersonaType: data.PetPersonaType,
+	char := s.charManager.GetCurrent()
+	if char != nil {
+		if data.PetName != "" {
+			char.Name = data.PetName
 		}
-		if err := s.characterStore.Update(char); err != nil {
+		if data.PetPersona != "" {
+			char.Persona = data.PetPersona
+		}
+		if data.PetPersonaType != "" {
+			char.PersonaType = data.PetPersonaType
+		}
+		if err := s.configLoader.SaveCharacters(); err != nil {
 			return s.sendError(sessionID, req.Action, err.Error())
 		}
-		char = s.characterStore.Get()
-		data.PetID = char.PetID
+		data.PetID = char.ID
 	}
 
 	return s.sendResponse(sessionID, req.Action, data)
+}
+
+func (s *PetService) handleCharacterSwitch(sessionID string, req Request) error {
+	var data CharacterSwitchRequest
+	if err := json.Unmarshal(req.Data, &data); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid character switch data")
+	}
+
+	if err := s.charManager.Switch(data.CharacterID); err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+
+	if err := s.configLoader.SaveCharacters(); err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+
+	s.sendPush(sessionID, PushTypeCharacterSwitch, CharacterSwitchPush{
+		CharacterID: s.charManager.GetCurrentID(),
+	})
+
+	return s.sendResponse(sessionID, req.Action, map[string]string{"character_id": data.CharacterID})
 }
 
 func (s *PetService) handleConfigGet(sessionID string, req Request) error {
@@ -411,19 +461,17 @@ func (s *PetService) handleConfigUpdate(sessionID string, req Request) error {
 }
 
 func (s *PetService) handleEmotionGet(sessionID string, req Request) error {
-	emotions := s.emotionEngine.GetEmotions()
-	dominantEmotion, emotionScore := s.emotionEngine.GetDominantEmotion()
+	char := s.charManager.GetCurrent()
+	if char == nil {
+		return s.sendError(sessionID, req.Action, "no active character")
+	}
 
-	var petID string
-	if s.characterStore != nil {
-		petID = s.characterStore.Get().PetID
-	}
-	if petID == "" {
-		petID = "pet_001"
-	}
+	emotions := char.GetEmotions()
+	emoEngine := char.GetEmotionEngine()
+	dominantEmotion, emotionScore := emoEngine.GetDominantEmotion()
 
 	emo := EmotionState{
-		PetID:       petID,
+		PetID:       char.ID,
 		Emotion:     dominantEmotion,
 		Joy:         emotions.Joy,
 		Anger:       emotions.Anger,
@@ -441,46 +489,6 @@ func (s *PetService) handleHealthCheck(sessionID string, req Request) error {
 		Status:    "ok",
 		Timestamp: time.Now().Unix(),
 	})
-}
-
-// EmotionDescriptions 情绪描述映射表
-// 索引：0=<20, 1=20-50, 2=50-80, 3=>80
-var EmotionDescriptions = map[string][]string{
-	"joy":      {"很不开心", "有点不开心", "有点开心", "很开心"},
-	"sadness":  {"很平静", "有点难过", "比较难过", "非常难过"},
-	"anger":    {"很平静", "有点生气", "比较生气", "非常生气"},
-	"fear":     {"很平静", "有点害怕", "比较害怕", "非常害怕"},
-	"disgust":  {"很平静", "有点厌恶", "比较厌恶", "非常厌恶"},
-	"surprise": {"很平静", "有点惊讶", "比较惊讶", "非常惊讶"},
-}
-
-func scoreToIndex(score int) int {
-	switch {
-	case score < 20:
-		return 0
-	case score < 50:
-		return 1
-	case score < 80:
-		return 2
-	default:
-		return 3
-	}
-}
-
-// GetEmotionDescription 根据情绪名称和分数返回描述
-func GetEmotionDescription(emotion string, score int) string {
-	// 中性情绪直接返回平静
-	if emotion == "neutral" || score == 50 {
-		return "平静"
-	}
-
-	descriptions, ok := EmotionDescriptions[emotion]
-	if !ok {
-		return "平静"
-	}
-
-	idx := scoreToIndex(score)
-	return descriptions[idx]
 }
 
 func (s *PetService) sendResponse(sessionID, action string, data interface{}) error {
@@ -537,10 +545,50 @@ func (s *PetService) sendPush(sessionID, pushType string, data interface{}) erro
 	return nil
 }
 
+func (s *PetService) AppConfig() AppConfig {
+	return s.appConfig
+}
+
 func mustMarshal(v interface{}) json.RawMessage {
 	data, err := json.Marshal(v)
 	if err != nil {
 		return json.RawMessage(`{"error": "marshal error"}`)
 	}
 	return data
+}
+
+var EmotionDescriptions = map[string][]string{
+	"joy":      {"很不开心", "有点不开心", "有点开心", "很开心"},
+	"sadness":  {"很平静", "有点难过", "比较难过", "非常难过"},
+	"anger":    {"很平静", "有点生气", "比较生气", "非常生气"},
+	"fear":     {"很平静", "有点害怕", "比较害怕", "非常害怕"},
+	"disgust":  {"很平静", "有点厌恶", "比较厌恶", "非常厌恶"},
+	"surprise": {"很平静", "有点惊讶", "比较惊讶", "非常惊讶"},
+}
+
+func scoreToIndex(score int) int {
+	switch {
+	case score < 20:
+		return 0
+	case score < 50:
+		return 1
+	case score < 80:
+		return 2
+	default:
+		return 3
+	}
+}
+
+func GetEmotionDescription(emotion string, score int) string {
+	if emotion == "neutral" || score == 50 {
+		return "平静"
+	}
+
+	descriptions, ok := EmotionDescriptions[emotion]
+	if !ok {
+		return "平静"
+	}
+
+	idx := scoreToIndex(score)
+	return descriptions[idx]
 }
