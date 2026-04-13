@@ -17,6 +17,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/pet"
+	"github.com/sipeed/picoclaw/pkg/pet/voice"
 )
 
 // Request 定义了客户端请求的类型
@@ -45,6 +46,7 @@ type PetChannel struct {
 	ctx                   context.Context     // 上下文
 	cancel                context.CancelFunc  // 取消函数
 	service               *pet.PetService     // 桌宠服务
+	voiceSynthesizer      *voice.Synthesizer  // 语音合成器
 }
 
 // petConn 表示一个WebSocket连接
@@ -94,11 +96,25 @@ func NewPetChannel(cfg config.PetConfig, msgBus *bus.MessageBus, workspacePath s
 	}
 
 	// 创建 PetService，传递工作区路径用于存储角色配置
-	pc.service = pet.NewPetService(msgBus, pet.PetServiceConfig{
+	var err error
+	pc.service, err = pet.NewPetService(msgBus, pet.PetServiceConfig{
 		WorkspacePath: workspacePath,
 	})
+	if err != nil {
+		logger.Errorf("pet: failed to create PetService: %v", err)
+		return nil, err
+	}
 	pc.service.SetPushHandler(pc.handleServicePush)
 	pc.service.Start()
+
+	// 初始化语音合成器
+	if voiceLoader := pc.service.VoiceLoader(); voiceLoader != nil {
+		if ttsProvider := voiceLoader.GetProvider(); ttsProvider != nil {
+			voiceSender := voice.NewSender(pc.sendVoicePush)
+			pc.voiceSynthesizer = voice.NewSynthesizer(ttsProvider, voiceSender)
+			logger.Infof("pet: voice synthesizer initialized")
+		}
+	}
 
 	logger.Infof("pet: created PetChannel with config: %v", cfg)
 
@@ -371,11 +387,12 @@ func mustMarshal(v interface{}) json.RawMessage {
 
 // petStreamer 实现流式输出，通过WebSocket发送增量内容
 type petStreamer struct {
-	channel   *PetChannel
-	sessionID string
-	lastLen   int
-	buffer    string
-	chatID    int64
+	channel          *PetChannel
+	sessionID        string
+	lastLen          int
+	buffer           string
+	chatID           int64
+	voiceSynthesizer *voice.Synthesizer // 语音合成器
 
 	// 状态机相关
 	textBuffer  strings.Builder // 收集 [text:] 中的文本
@@ -383,14 +400,19 @@ type petStreamer struct {
 	inTextTag   bool            // 是否在 [text:...] 标签内
 	inOtherTag  bool            // 是否在其他标签内（如 [emotion:...]）
 	pendingText string          // 已收集待发送的文本（遇到标签前的）
+
+	textVoiceBuffer strings.Builder // 收集 [text:] 中的文本
+	voiceBuffer     strings.Builder // 收集 [voice:] 中的语音数据
+	inVoiceTag      bool            // 是否在 [voice:...] 标签内
 }
 
 // BeginStream 实现StreamingCapable接口
 func (c *PetChannel) BeginStream(ctx context.Context, sessionID string) (channels.Streamer, error) {
 	return &petStreamer{
-		channel:   c,
-		sessionID: sessionID,
-		chatID:    0,
+		channel:          c,
+		sessionID:        sessionID,
+		chatID:           0,
+		voiceSynthesizer: c.voiceSynthesizer,
 	}, nil
 }
 
@@ -408,11 +430,27 @@ func (s *petStreamer) Update(ctx context.Context, content string) error {
 
 	s.lastLen = len(content)
 	s.buffer += content
+	s.textVoiceBuffer.WriteString(content)
+
+	sendVoice := func() {
+		// 如果配置了语音合成器且启用了语音，则触发TTS
+		if s.voiceSynthesizer != nil && s.channel.service.AppConfig().VoiceEnabled {
+			emotion := ""
+			if char := s.channel.service.CharManager().GetCurrent(); char != nil {
+				emotion, _ = char.GetEmotionEngine().GetDominantEmotion()
+			}
+			// 触发语音合成（异步进行，不阻塞文本发送）
+			textToSend := s.textVoiceBuffer.String()
+			go s.voiceSynthesizer.ParseAndSynthesize(s.sessionID, s.chatID, textToSend, emotion)
+		}
+		s.textVoiceBuffer.Reset()
+	}
 
 	sendPending := func() {
 		if len(s.buffer) > 0 {
+			textToSend := s.buffer
 			s.chatID++
-			s.channel.sendStreamChunk(s.sessionID, s.chatID, "text", s.buffer, false)
+			s.channel.sendStreamChunk(s.sessionID, s.chatID, "text", textToSend, false)
 			s.buffer = ""
 		}
 	}
@@ -423,6 +461,7 @@ func (s *petStreamer) Update(ctx context.Context, content string) error {
 				s.inTextTag = false
 				i := strings.Index(s.buffer, "]")
 				s.buffer = s.buffer[:i]
+				sendVoice()
 			}
 			sendPending()
 		} else if strings.Contains(s.buffer, "[text:") {
@@ -450,6 +489,8 @@ func (s *petStreamer) Finalize(ctx context.Context, content string) error {
 
 	// 清空状态，不发送任何文本
 	s.buffer = ""
+	s.textVoiceBuffer.Reset()
+	s.voiceBuffer.Reset()
 	s.textBuffer.Reset()
 	s.tagBuffer.Reset()
 	s.inTextTag = false
@@ -589,7 +630,9 @@ func (c *PetChannel) sendStreamChunk(sessionID string, chatID int64, contentType
 
 	var emotion, act string
 	if c.service != nil {
-		emotion, _ = c.service.EmotionEngine().GetDominantEmotion()
+		if char := c.service.CharManager().GetCurrent(); char != nil {
+			emotion, _ = char.GetEmotionEngine().GetDominantEmotion()
+		}
 	}
 
 	streamData := StreamData{
@@ -600,12 +643,14 @@ func (c *PetChannel) sendStreamChunk(sessionID string, chatID int64, contentType
 		Action:      act,
 	}
 
+	dataBytes, _ := json.Marshal(streamData)
+
 	for connID, pc := range c.connections {
 		if pc.sessionID == sessionID || sessionID == "broadcast" {
 			pc.writeJSON(PetStreamResponse{
 				Type:      "push",
 				PushType:  "ai_chat",
-				Data:      streamData,
+				Data:      dataBytes,
 				IsFinal:   isFinal,
 				Timestamp: time.Now().Unix(),
 			})
@@ -631,6 +676,32 @@ func (c *PetChannel) sendResponse(sessionID string, action string, data map[stri
 	}
 }
 
+// sendVoicePush 发送语音推送（供 voice.Sender 调用）
+func (c *PetChannel) sendVoicePush(sessionID string, pushType string, data any) error {
+	c.connsMu.RLock()
+	defer c.connsMu.RUnlock()
+
+	dataBytes, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+
+	for _, pc := range c.connections {
+		if pc.sessionID == sessionID || sessionID == "broadcast" {
+			if err := pc.writeJSON(PetStreamResponse{
+				Type:      "push",
+				PushType:  pushType,
+				Data:      dataBytes,
+				IsFinal:   false,
+				Timestamp: time.Now().Unix(),
+			}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // StreamData 流式数据内容
 type StreamData struct {
 	ChatID      int64  `json:"chat_id"`
@@ -642,9 +713,9 @@ type StreamData struct {
 
 // PetStreamResponse 流式响应结构
 type PetStreamResponse struct {
-	Type      string     `json:"type"`
-	PushType  string     `json:"push_type"`
-	Data      StreamData `json:"data"`
-	IsFinal   bool       `json:"is_final"`
-	Timestamp int64      `json:"timestamp"`
+	Type      string          `json:"type"`
+	PushType  string          `json:"push_type"`
+	Data      json.RawMessage `json:"data"`
+	IsFinal   bool            `json:"is_final"`
+	Timestamp int64           `json:"timestamp"`
 }
