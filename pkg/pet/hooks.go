@@ -34,21 +34,21 @@ import (
 //	- BeforeLLM: 暂未使用（保留扩展）
 //	- AfterLLM: 解析LLM响应中的标签
 type LLMTagHook struct {
-	emotionEngine *emotion.EmotionEngine // 情绪引擎
-	actionManager *action.ActionManager  // 动作管理器
-	petService    *PetService            // Pet服务，用于推送
+	getEmotionEngine func() *emotion.EmotionEngine // 获取当前角色的情绪引擎
+	actionManager    *action.ActionManager         // 动作管理器
+	petService       *PetService                   // Pet服务，用于推送
 }
 
 // NewLLMTagHook 创建LLMTagHook实例
 // 参数：
-//   - emotionEngine: 情绪引擎指针
+//   - getEmotionEngine: 获取当前角色情绪引擎的函数
 //   - actionManager: 动作管理器指针
 //   - petService: Pet服务指针，用于推送情绪和动作
-func NewLLMTagHook(emotionEngine *emotion.EmotionEngine, actionManager *action.ActionManager, petService *PetService) *LLMTagHook {
+func NewLLMTagHook(getEmotionEngine func() *emotion.EmotionEngine, actionManager *action.ActionManager, petService *PetService) *LLMTagHook {
 	return &LLMTagHook{
-		emotionEngine: emotionEngine,
-		actionManager: actionManager,
-		petService:    petService,
+		getEmotionEngine: getEmotionEngine,
+		actionManager:    actionManager,
+		petService:       petService,
 	}
 }
 
@@ -59,32 +59,32 @@ func (h *LLMTagHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (
 		return req, agent.HookDecision{Action: agent.HookActionContinue}, nil
 	}
 
-	emotions := h.emotionEngine.GetEmotions()
+	emotions := h.getEmotionEngine().GetEmotions()
 	actions := h.actionManager.List()
 	// 确定 MBTI 类型的各个维度
 	var IE string
-	if h.emotionEngine.GetPersonality().IE > 50 {
+	if h.getEmotionEngine().GetPersonality().IE > 50 {
 		IE = "i"
 	} else {
 		IE = "e"
 	}
 
 	var SN string
-	if h.emotionEngine.GetPersonality().SN > 50 {
+	if h.getEmotionEngine().GetPersonality().SN > 50 {
 		SN = "s"
 	} else {
 		SN = "n"
 	}
 
 	var TF string
-	if h.emotionEngine.GetPersonality().TF > 50 {
+	if h.getEmotionEngine().GetPersonality().TF > 50 {
 		TF = "t"
 	} else {
 		TF = "f"
 	}
 
 	var JP string
-	if h.emotionEngine.GetPersonality().JP > 50 {
+	if h.getEmotionEngine().GetPersonality().JP > 50 {
 		JP = "j"
 	} else {
 		JP = "p"
@@ -203,8 +203,8 @@ func (h *LLMTagHook) AfterLLM(ctx context.Context, resp *agent.LLMHookResponse) 
 		logger.InfoCF("pet", "LLMTagHook: 解析到情绪标签", map[string]any{
 			"emotion_tags": emotionTags,
 		})
-		h.emotionEngine.UpdateFromLLMTagsDelta(emotionTags)
-		h.emotionEngine.Save()
+		h.getEmotionEngine().UpdateFromLLMTagsDelta(emotionTags)
+		h.getEmotionEngine().Save()
 	}
 
 	// 2. 解析MBTI标签并更新
@@ -213,8 +213,8 @@ func (h *LLMTagHook) AfterLLM(ctx context.Context, resp *agent.LLMHookResponse) 
 		logger.InfoCF("pet", "LLMTagHook: 解析到MBTI标签", map[string]any{
 			"mbti_tags": mbtiTags,
 		})
-		h.emotionEngine.UpdateMBTIFromTags(mbtiTags)
-		h.emotionEngine.Save()
+		h.getEmotionEngine().UpdateMBTIFromTags(mbtiTags)
+		h.getEmotionEngine().Save()
 	}
 
 	// 3. 解析动作标签并触发推送
@@ -230,7 +230,7 @@ func (h *LLMTagHook) AfterLLM(ctx context.Context, resp *agent.LLMHookResponse) 
 	}
 
 	// 4. 检查情绪阈值，决定是否推送
-	if shouldPush, push := h.emotionEngine.ShouldPush(); shouldPush {
+	if shouldPush, push := h.getEmotionEngine().ShouldPush(); shouldPush {
 		logger.InfoCF("pet", "LLMTagHook: 情绪阈值触发推送", map[string]any{
 			"emotion": push.Emotion,
 			"score":   push.Score,
