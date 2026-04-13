@@ -17,6 +17,7 @@ const (
 	TypeTypingStop    = "typing.stop"
 	TypeError         = "error"
 	TypePong          = "pong"
+	TypeSessionInfo   = "session.info"
 
 	PicoTokenPrefix = "pico-"
 )

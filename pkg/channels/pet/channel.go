@@ -3,14 +3,19 @@ package pet
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/gorilla/websocket"
-	"net/http"
+	"io"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gorilla/websocket"
+	"net/http"
 
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/channels"
@@ -27,6 +32,13 @@ type Response = pet.Response
 
 // Push 定义了服务端推送的类型
 type Push = pet.Push
+
+// AudioPush 音频推送数据结构
+type AudioPush struct {
+	AudioType   string `json:"audio_type"`   // 音频类型: audio, voice
+	ContentType string `json:"content_type"` // MIME类型: audio/mpeg, audio/wav等
+	Data        string `json:"data"`         // base64编码的音频数据
+}
 
 const (
 	pingInterval = 30 * time.Second // 心跳间隔
@@ -168,8 +180,91 @@ func (c *PetChannel) Send(ctx context.Context, msg bus.OutboundMessage) ([]strin
 		return nil, channels.ErrNotRunning
 	}
 	logger.Infof("pet: Send, msg=%v", msg)
-	c.sendToClient(msg.ChatID, msg.Content)
+
+	// 如果是 cron 提醒（chatID 以 "cron-" 开头），广播到所有客户端
+	if strings.HasPrefix(msg.ChatID, "cron-") {
+		c.broadcastReminder(msg.Content)
+	} else {
+		c.sendToClient(msg.ChatID, msg.Content)
+	}
 	return nil, nil
+}
+
+// SendMedia 发送媒体消息（实现MediaSender接口）
+func (c *PetChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMessage) ([]string, error) {
+	if !c.IsRunning() {
+		return nil, channels.ErrNotRunning
+	}
+
+	logger.Infof("pet: SendMedia, msg=%v", msg)
+
+	for _, part := range msg.Parts {
+		if part.Type == "audio" || part.Type == "voice" {
+			// 解析媒体引用获取文件路径
+			localPath, err := c.GetMediaStore().Resolve(part.Ref)
+			if err != nil {
+				logger.Warnf("pet: failed to resolve media ref %s: %v", part.Ref, err)
+				continue
+			}
+
+			// 读取音频文件并发送到客户端
+			if err := c.sendAudioToClient(localPath, part.Type); err != nil {
+				logger.Warnf("pet: failed to send audio: %v", err)
+				continue
+			}
+		}
+	}
+
+	return nil, nil
+}
+
+// sendAudioToClient 发送音频文件到客户端
+func (c *PetChannel) sendAudioToClient(filePath string, audioType string) error {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to open audio file: %w", err)
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return fmt.Errorf("failed to read audio file: %w", err)
+	}
+
+	// 将音频数据转换为 base64
+	audioBase64 := base64.StdEncoding.EncodeToString(data)
+
+	// 获取文件扩展名
+	ext := strings.ToLower(filepath.Ext(filePath))
+	contentType := "audio/mpeg"
+	if ext == ".wav" {
+		contentType = "audio/wav"
+	} else if ext == ".ogg" {
+		contentType = "audio/ogg"
+	} else if ext == ".opus" {
+		contentType = "audio/opus"
+	}
+
+	c.connsMu.RLock()
+	defer c.connsMu.RUnlock()
+
+	logger.Infof("pet: sending audio to %d connections, size=%d", len(c.connections), len(data))
+
+	for connID, pc := range c.connections {
+		logger.Infof("pet: sending audio to conn_id=%s", connID)
+		pc.writeJSON(pet.Push{
+			Type:     "push",
+			PushType: pet.PushTypeAudio,
+			Data: mustMarshal(AudioPush{
+				AudioType:   audioType,
+				ContentType: contentType,
+				Data:        audioBase64,
+			}),
+			Timestamp: time.Now().Unix(),
+		})
+	}
+
+	return nil
 }
 
 // IsRunning 是否运行
@@ -219,9 +314,11 @@ func (c *PetChannel) sendToClient(sessionID, content string) {
 
 	logger.Infof("pet: sendToClient, sessionID=%s, content=%s, connections_count=%d", sessionID, content, len(c.connections))
 
+	matched := false
 	for connID, pc := range c.connections {
 		logger.Infof("pet: checking connection conn_id=%s, sessionID=%s", connID, pc.sessionID)
-		if pc.sessionID == sessionID || sessionID == "broadcast" {
+		// 匹配条件：sessionID相同、broadcast、或连接是默认会话（用于桌宠客户端）
+		if pc.sessionID == sessionID || sessionID == "broadcast" || pc.sessionID == "default" {
 			logger.Infof("pet: matched! sending to conn_id=%s", connID)
 			data, _ := json.Marshal(content)
 			pc.writeJSON(Response{
@@ -229,7 +326,40 @@ func (c *PetChannel) sendToClient(sessionID, content string) {
 				Action: pet.ActionChat,
 				Data:   data,
 			})
+			matched = true
 		}
+	}
+
+	// 如果没有匹配任何连接，但有连接存在，则广播到所有连接（用于cron提醒等场景）
+	if !matched && len(c.connections) > 0 && sessionID != "default" {
+		logger.Infof("pet: no direct match, broadcasting to all connections")
+		for connID, pc := range c.connections {
+			logger.Infof("pet: broadcasting to conn_id=%s", connID)
+			data, _ := json.Marshal(content)
+			pc.writeJSON(Response{
+				Status: pet.StatusOK,
+				Action: pet.ActionChat,
+				Data:   data,
+			})
+		}
+	}
+}
+
+// broadcastReminder 广播提醒消息到所有连接的客户端
+func (c *PetChannel) broadcastReminder(content string) {
+	c.connsMu.RLock()
+	defer c.connsMu.RUnlock()
+
+	logger.Infof("pet: broadcastReminder, content=%s, connections_count=%d", content, len(c.connections))
+
+	for connID, pc := range c.connections {
+		logger.Infof("pet: sending reminder to conn_id=%s", connID)
+		data, _ := json.Marshal(content)
+		pc.writeJSON(Response{
+			Status: pet.StatusOK,
+			Action: pet.ActionChat,
+			Data:   data,
+		})
 	}
 }
 
@@ -393,14 +523,8 @@ func (c *PetChannel) BeginStream(ctx context.Context, sessionID string) (channel
 	}, nil
 }
 
-// Update 发送增量内容到客户端，使用状态机解析标签
+// Update 发送增量内容到客户端，实时解析 [text:xxx] 标签并发送文本块
 func (s *petStreamer) Update(ctx context.Context, content string) error {
-	logger.DebugCF("pet", "Update called", map[string]any{
-		"content":    content,
-		"inTextTag":  s.inTextTag,
-		"inOtherTag": s.inOtherTag,
-		"buffer":     s.buffer,
-	})
 	if s == nil || s.channel == nil {
 		return nil
 	}
@@ -418,7 +542,11 @@ func (s *petStreamer) Update(ctx context.Context, content string) error {
 
 	if len(s.buffer) > 0 {
 		if s.inTextTag {
-			if strings.Contains(s.buffer, "]") {
+			// 正在收集 [text:...] 标签内的内容
+			if idx := strings.Index(s.buffer, "]"); idx >= 0 {
+				// 找到标签结束
+				textContent := s.buffer[:idx]
+				s.buffer = s.buffer[idx+1:]
 				s.inTextTag = false
 				i := strings.Index(s.buffer, "]")
 				s.buffer = s.buffer[:i]
@@ -435,28 +563,24 @@ func (s *petStreamer) Update(ctx context.Context, content string) error {
 	return nil
 }
 
-// Finalize 发送最终完成标记
-// 注意：不再发送重复文本，只发送情绪状态汇总
+// Finalize 发送最终完成标记，包含完整内容
 func (s *petStreamer) Finalize(ctx context.Context, content string) error {
-
-	logger.DebugCF("pet", "Finalize called", map[string]any{
-		"content": content,
-	})
-
 	if s == nil || s.channel == nil {
 		return nil
 	}
 
-	// 清空状态，不发送任何文本
-	s.buffer = ""
-	s.textBuffer.Reset()
-	s.tagBuffer.Reset()
-	s.inTextTag = false
-	s.inOtherTag = false
+	// 清理任何残留的 [text:] 标签
+	cleanContent := cleanStreamTags(content)
 
-	// 发送最终状态块（带情绪状态）
-	s.chatID++
-	s.channel.sendStreamChunk(s.sessionID, s.chatID, "final", "", true)
+	// 发送最终内容块
+	if cleanContent != "" {
+		s.chatID++
+		s.channel.sendStreamChunk(s.sessionID, s.chatID, "final", cleanContent, true)
+	} else {
+		// 即使内容为空，也发送 final 标记
+		s.chatID++
+		s.channel.sendStreamChunk(s.sessionID, s.chatID, "final", "", true)
+	}
 
 	return nil
 }
@@ -600,7 +724,8 @@ func (c *PetChannel) sendStreamChunk(sessionID string, chatID int64, contentType
 	}
 
 	for connID, pc := range c.connections {
-		if pc.sessionID == sessionID || sessionID == "broadcast" {
+		// 匹配条件：sessionID相同，或者是默认会话（用于桌宠客户端）
+		if pc.sessionID == sessionID || sessionID == "broadcast" || pc.sessionID == "default" {
 			pc.writeJSON(PetStreamResponse{
 				Type:      "push",
 				PushType:  "ai_chat",
