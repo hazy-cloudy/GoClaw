@@ -532,8 +532,15 @@ func (s *petStreamer) Update(ctx context.Context, content string) error {
 	s.lastLen = len(content)
 	s.buffer += content
 
-	// 持续解析并发送文本块
-	for {
+	sendPending := func() {
+		if len(s.buffer) > 0 {
+			s.chatID++
+			s.channel.sendStreamChunk(s.sessionID, s.chatID, "text", s.buffer, false)
+			s.buffer = ""
+		}
+	}
+
+	if len(s.buffer) > 0 {
 		if s.inTextTag {
 			// 正在收集 [text:...] 标签内的内容
 			if idx := strings.Index(s.buffer, "]"); idx >= 0 {
@@ -541,36 +548,15 @@ func (s *petStreamer) Update(ctx context.Context, content string) error {
 				textContent := s.buffer[:idx]
 				s.buffer = s.buffer[idx+1:]
 				s.inTextTag = false
-
-				if textContent != "" {
-					s.chatID++
-					s.channel.sendStreamChunk(s.sessionID, s.chatID, "text", textContent, false)
-				}
-			} else {
-				// 标签未结束，等待更多内容
-				break
+				i := strings.Index(s.buffer, "]")
+				s.buffer = s.buffer[:i]
 			}
-		} else {
-			// 不在 [text:...] 标签内，查找下一个标签
-			tagIdx := strings.Index(s.buffer, "[text:")
-			if tagIdx >= 0 {
-				// 发送标签前的纯文本（如果有）
-				beforeTag := s.buffer[:tagIdx]
-				if beforeTag != "" {
-					s.chatID++
-					s.channel.sendStreamChunk(s.sessionID, s.chatID, "text", beforeTag, false)
-				}
-				s.buffer = s.buffer[tagIdx+6:] // 跳过 "[text:"
-				s.inTextTag = true
-			} else {
-				// 没有找到 [text: 标签，发送所有剩余内容作为纯文本
-				if s.buffer != "" {
-					s.chatID++
-					s.channel.sendStreamChunk(s.sessionID, s.chatID, "text", s.buffer, false)
-					s.buffer = ""
-				}
-				break
-			}
+			sendPending()
+		} else if strings.Contains(s.buffer, "[text:") {
+			s.inTextTag = true
+			i := strings.Index(s.buffer, "[text:")
+			s.buffer = s.buffer[i+6:]
+			sendPending()
 		}
 	}
 
