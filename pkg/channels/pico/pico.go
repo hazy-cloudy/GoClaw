@@ -237,9 +237,21 @@ func (c *PicoChannel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch path {
 	case "/ws", "/ws/":
 		c.handleWebSocket(w, r)
+	case "/token", "/token/":
+		c.handleGetToken(w, r)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// handleGetToken returns the current token and ws_url for clients.
+func (c *PicoChannel) handleGetToken(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"token":   c.config.Token.String(),
+		"ws_url":  fmt.Sprintf("ws://%s/pico/ws", r.Host),
+		"enabled": c.config.Enabled,
+	})
 }
 
 // Send implements Channel — sends a message to the appropriate WebSocket connection.
@@ -381,6 +393,19 @@ func (c *PicoChannel) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		"conn_id":    pc.id,
 		"session_id": sessionID,
 	})
+
+	// Send session info to client
+	sessionInfo := PicoMessage{
+		Type:      TypeSessionInfo,
+		ID:        uuid.New().String(),
+		SessionID: sessionID,
+		Timestamp: time.Now().UnixMilli(),
+		Payload: map[string]any{
+			"session_id": sessionID,
+			"conn_id":    pc.id,
+		},
+	}
+	pc.writeJSON(sessionInfo)
 
 	go c.readLoop(pc)
 }

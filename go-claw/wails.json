@@ -1,0 +1,14 @@
+{
+  "name": "go-claw",
+  "version": "0.1.0",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev": "npm run dev",
+  "go_wails": {
+    "devserver": {
+      "url": "auto"
+    },
+    "wailsjsdir": "./frontend/src",
+    "version": "v2"
+  }
+}

@@ -69,3 +69,35 @@ web/backend/dist/*
 docker/data
 
 .omc/
+
+# Binaries
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Output of go coverage
+*.out
+
+# Dependency directories
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Node
+node_modules/
+dist/
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
