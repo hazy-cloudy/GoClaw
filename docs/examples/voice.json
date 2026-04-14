@@ -1,0 +1,14 @@
+{
+  "model_list": [
+    {
+      "name": "minimax-tts",
+      "model": "speech-2.8-hd",
+      "api_key": "${MINIMAX_API_KEY}",
+      "api_base": "https://api.minimaxi.com/v1/t2a_v2",
+      "enabled": true
+    }
+  ],
+  "default_model": "minimax-tts",
+  "asr_enabled": true,
+  "voice_enabled": false
+}
