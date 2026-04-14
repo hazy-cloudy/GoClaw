@@ -10,6 +10,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/agent"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/pet/action"
+	"github.com/sipeed/picoclaw/pkg/pet/characters"
 	"github.com/sipeed/picoclaw/pkg/pet/emotion"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/tools"
@@ -19,72 +20,78 @@ import (
 // LLM标签解析Hook
 // =============================================================================
 
-// LLMTagHook LLM标签解析Hook
-// 在AgentLoop的LLM调用前后进行拦截，处理情绪、动作、MBTI标签
+// PetHook LLM拦截Hook
+// 在AgentLoop的LLM调用前后进行拦截，处理角色信息、情绪、动作、MBTI标签
 //
 // 功能：
-//  1. 解析LLM输出中的特殊标签
-//  2. 更新情绪状态机
-//  3. 触发动作推送
-//  4. 更新MBTI性格配置
+//  1. 注入角色信息(persona)到system prompt
+//  2. 注入情绪状态、MBTI、可用动作到system prompt
+//  3. 解析LLM输出中的特殊标签
+//  4. 更新情绪状态机
+//  5. 触发动作推送
+//  6. 更新MBTI性格配置
 //
 // 使用方式：
 //
 //	将此Hook注册到AgentLoop的事件系统中
-//	- BeforeLLM: 暂未使用（保留扩展）
-//	- AfterLLM: 解析LLM响应中的标签
-type LLMTagHook struct {
-	getEmotionEngine func() *emotion.EmotionEngine // 获取当前角色的情绪引擎
-	actionManager    *action.ActionManager         // 动作管理器
-	petService       *PetService                   // Pet服务，用于推送
+type PetHook struct {
+	charManager   *characters.Manager   // 角色管理器
+	actionManager *action.ActionManager // 动作管理器
+	petService    *PetService           // Pet服务，用于推送
 }
 
-// NewLLMTagHook 创建LLMTagHook实例
+// NewPetHook 创建PetHook实例
 // 参数：
-//   - getEmotionEngine: 获取当前角色情绪引擎的函数
+//   - charManager: 角色管理器
 //   - actionManager: 动作管理器指针
 //   - petService: Pet服务指针，用于推送情绪和动作
-func NewLLMTagHook(getEmotionEngine func() *emotion.EmotionEngine, actionManager *action.ActionManager, petService *PetService) *LLMTagHook {
-	return &LLMTagHook{
-		getEmotionEngine: getEmotionEngine,
-		actionManager:    actionManager,
-		petService:       petService,
+func NewPetHook(charManager *characters.Manager, actionManager *action.ActionManager, petService *PetService) *PetHook {
+	return &PetHook{
+		charManager:   charManager,
+		actionManager: actionManager,
+		petService:    petService,
 	}
 }
 
 // BeforeLLM LLM调用前拦截
-// 动态注入情绪状态和可用动作到 system prompt
-func (h *LLMTagHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (*agent.LLMHookRequest, agent.HookDecision, error) {
+// 动态注入角色信息、情绪状态和可用动作到 system prompt
+func (h *PetHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (*agent.LLMHookRequest, agent.HookDecision, error) {
 	if req == nil || req.Messages == nil {
 		return req, agent.HookDecision{Action: agent.HookActionContinue}, nil
 	}
 
-	emotions := h.getEmotionEngine().GetEmotions()
+	char := h.charManager.GetCurrent()
+	if char == nil {
+		return req, agent.HookDecision{Action: agent.HookActionContinue}, nil
+	}
+
+	emotions := char.GetEmotionEngine().GetEmotions()
 	actions := h.actionManager.List()
+
 	// 确定 MBTI 类型的各个维度
 	var IE string
-	if h.getEmotionEngine().GetPersonality().IE > 50 {
+	if char.GetEmotionEngine().GetPersonality().IE > 50 {
 		IE = "i"
 	} else {
 		IE = "e"
 	}
 
 	var SN string
-	if h.getEmotionEngine().GetPersonality().SN > 50 {
+	if char.GetEmotionEngine().GetPersonality().SN > 50 {
 		SN = "s"
 	} else {
 		SN = "n"
 	}
 
 	var TF string
-	if h.getEmotionEngine().GetPersonality().TF > 50 {
+	if char.GetEmotionEngine().GetPersonality().TF > 50 {
 		TF = "t"
 	} else {
 		TF = "f"
 	}
 
 	var JP string
-	if h.getEmotionEngine().GetPersonality().JP > 50 {
+	if char.GetEmotionEngine().GetPersonality().JP > 50 {
 		JP = "j"
 	} else {
 		JP = "p"
@@ -102,7 +109,18 @@ func (h *LLMTagHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (
 		actionNames = append(actionNames, a.Name)
 	}
 
-	prompt := fmt.Sprintf(`【你必须按以下要求输出回复】
+	// 角色信息prompt
+	personaPrompt := fmt.Sprintf(`【桌宠角色信息】
+姓名：%s
+性格类型：%s
+
+性格描述：
+%s
+
+回复风格应体现以上人格特征，现在你作为一位桌宠角色，正在和用户聊天，聊天需要语言简单，就几个字好，在其他事情上就可以正常回答十几个字。`, char.Name, char.PersonaType, char.Persona)
+
+	// 情绪动作prompt
+	emotionPrompt := fmt.Sprintf(`【你必须按以下要求输出回复】
  当前你的情绪状态：joy=%d, anger=%d, sadness=%d, disgust=%d, surprise=%d, fear=%d
  你的mbti人格:%s
 
@@ -130,7 +148,7 @@ func (h *LLMTagHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (
 你必须使用以下格式回复用户：
 
 1. [text:你的回复内容] - 用于回复用户的内容
-2. [emotion:情绪名:+/-值] - 情绪变化
+2. [emotion:情绪名:+|值] - 情绪变化
 3. [action:动作名] - 动作触发（可选，必须选择可用动作之一或者不选择任何动作）
 4. [mbti:维度:字母] - MBTI变化
 
@@ -144,14 +162,21 @@ func (h *LLMTagHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (
 		strings.Join(emotionList, ", "),
 		strings.Join(actionNames, ", "))
 
+	// 先注入角色信息，再注入情绪动作
 	personaMsg := providers.Message{
 		Role:    "system",
-		Content: prompt,
+		Content: personaPrompt,
+	}
+	emotionMsg := providers.Message{
+		Role:    "system",
+		Content: emotionPrompt,
 	}
 
-	req.Messages = append([]providers.Message{personaMsg}, req.Messages...)
+	req.Messages = append([]providers.Message{personaMsg, emotionMsg}, req.Messages...)
 
-	logger.InfoCF("pet", "LLMTagHook.BeforeLLM: 已注入情绪动作上下文", map[string]any{
+	logger.InfoCF("pet", "PetHook.BeforeLLM: 已注入角色信息、情绪动作上下文", map[string]any{
+		"character":      char.Name,
+		"persona_length": len(personaPrompt),
 		"emotions": fmt.Sprintf("joy=%d, anger=%d, sadness=%d, disgust=%d, surprise=%d, fear=%d",
 			emotions.Joy, emotions.Anger, emotions.Sadness, emotions.Disgust, emotions.Surprise, emotions.Fear),
 		"actions":        actionNames,
@@ -173,21 +198,21 @@ func (h *LLMTagHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (
 //  6. 触发动作推送
 //  7. 检查情绪阈值，决定是否推送
 //  8. 从内容中移除所有标签
-func (h *LLMTagHook) AfterLLM(ctx context.Context, resp *agent.LLMHookResponse) (*agent.LLMHookResponse, agent.HookDecision, error) {
+func (h *PetHook) AfterLLM(ctx context.Context, resp *agent.LLMHookResponse) (*agent.LLMHookResponse, agent.HookDecision, error) {
 	// 防御性检查
 	if resp == nil || resp.Response == nil {
-		logger.InfoCF("pet", "LLMTagHook.AfterLLM: 响应为空，跳过", nil)
+		logger.InfoCF("pet", "PetHook.AfterLLM: 响应为空，跳过", nil)
 		return resp, agent.HookDecision{Action: agent.HookActionContinue}, nil
 	}
 
 	content := resp.Response.Content
 	if content == "" {
-		logger.InfoCF("pet", "LLMTagHook.AfterLLM: 内容为空，跳过", nil)
+		logger.InfoCF("pet", "PetHook.AfterLLM: 内容为空，跳过", nil)
 		return resp, agent.HookDecision{Action: agent.HookActionContinue}, nil
 	}
 
 	// 记录LLM原始响应
-	logger.InfoCF("pet", "LLMTagHook.AfterLLM: 收到LLM响应", map[string]any{
+	logger.InfoCF("pet", "PetHook.AfterLLM: 收到LLM响应", map[string]any{
 		"content_length": len(content),
 		"content_preview": func() string {
 			if len(content) > 200 {
@@ -200,27 +225,27 @@ func (h *LLMTagHook) AfterLLM(ctx context.Context, resp *agent.LLMHookResponse) 
 	// 1. 解析情绪标签并更新（使用增量更新）
 	emotionTags := parseEmotionTags(content)
 	if len(emotionTags) > 0 {
-		logger.InfoCF("pet", "LLMTagHook: 解析到情绪标签", map[string]any{
+		logger.InfoCF("pet", "PetHook: 解析到情绪标签", map[string]any{
 			"emotion_tags": emotionTags,
 		})
-		h.getEmotionEngine().UpdateFromLLMTagsDelta(emotionTags)
-		h.getEmotionEngine().Save()
+		h.charManager.GetCurrent().GetEmotionEngine().UpdateFromLLMTagsDelta(emotionTags)
+		// 情绪状态会在 Shutdown 时通过 configManager 统一保存
 	}
 
 	// 2. 解析MBTI标签并更新
 	mbtiTags := emotion.ParseMBTITags(content)
 	if len(mbtiTags) > 0 {
-		logger.InfoCF("pet", "LLMTagHook: 解析到MBTI标签", map[string]any{
+		logger.InfoCF("pet", "PetHook: 解析到MBTI标签", map[string]any{
 			"mbti_tags": mbtiTags,
 		})
-		h.getEmotionEngine().UpdateMBTIFromTags(mbtiTags)
-		h.getEmotionEngine().Save()
+		h.charManager.GetCurrent().GetEmotionEngine().UpdateMBTIFromTags(mbtiTags)
+		// MBTI 会在 Shutdown 时通过 configManager 统一保存
 	}
 
 	// 3. 解析动作标签并触发推送
 	actionNames := h.actionManager.ParseActionTags(content)
 	if len(actionNames) > 0 {
-		logger.InfoCF("pet", "LLMTagHook: 解析到动作标签", map[string]any{
+		logger.InfoCF("pet", "PetHook: 解析到动作标签", map[string]any{
 			"action_names": actionNames,
 		})
 		actions := h.actionManager.GetByNames(actionNames)
@@ -230,8 +255,8 @@ func (h *LLMTagHook) AfterLLM(ctx context.Context, resp *agent.LLMHookResponse) 
 	}
 
 	// 4. 检查情绪阈值，决定是否推送
-	if shouldPush, push := h.getEmotionEngine().ShouldPush(); shouldPush {
-		logger.InfoCF("pet", "LLMTagHook: 情绪阈值触发推送", map[string]any{
+	if shouldPush, push := h.charManager.GetCurrent().GetEmotionEngine().ShouldPush(); shouldPush {
+		logger.InfoCF("pet", "PetHook: 情绪阈值触发推送", map[string]any{
 			"emotion": push.Emotion,
 			"score":   push.Score,
 		})
@@ -267,12 +292,12 @@ func (h *LLMTagHook) AfterLLM(ctx context.Context, resp *agent.LLMHookResponse) 
 
 // BeforeTool 工具执行前拦截
 // 通知客户端开始执行工具
-func (h *LLMTagHook) BeforeTool(ctx context.Context, call *agent.ToolCallHookRequest) (*agent.ToolCallHookRequest, agent.HookDecision, error) {
+func (h *PetHook) BeforeTool(ctx context.Context, call *agent.ToolCallHookRequest) (*agent.ToolCallHookRequest, agent.HookDecision, error) {
 	if call == nil || call.Tool == "" {
 		return call, agent.HookDecision{Action: agent.HookActionContinue}, nil
 	}
 
-	logger.InfoCF("pet", "LLMTagHook.BeforeTool: 工具执行开始", map[string]any{
+	logger.InfoCF("pet", "PetHook.BeforeTool: 工具执行开始", map[string]any{
 		"tool": call.Tool,
 		"args": call.Arguments,
 	})
@@ -284,12 +309,12 @@ func (h *LLMTagHook) BeforeTool(ctx context.Context, call *agent.ToolCallHookReq
 
 // AfterTool 工具执行后拦截
 // 通知客户端工具执行完成
-func (h *LLMTagHook) AfterTool(ctx context.Context, result *agent.ToolResultHookResponse) (*agent.ToolResultHookResponse, agent.HookDecision, error) {
+func (h *PetHook) AfterTool(ctx context.Context, result *agent.ToolResultHookResponse) (*agent.ToolResultHookResponse, agent.HookDecision, error) {
 	if result == nil || result.Tool == "" {
 		return result, agent.HookDecision{Action: agent.HookActionContinue}, nil
 	}
 
-	logger.InfoCF("pet", "LLMTagHook.AfterTool: 工具执行完成", map[string]any{
+	logger.InfoCF("pet", "PetHook.AfterTool: 工具执行完成", map[string]any{
 		"tool":     result.Tool,
 		"duration": result.Duration.String(),
 	})
@@ -318,7 +343,7 @@ func (h *LLMTagHook) AfterTool(ctx context.Context, result *agent.ToolResultHook
 //	  },
 //	  "timestamp": 1712610000
 //	}
-func (h *LLMTagHook) pushActionTrigger(act *action.Action) {
+func (h *PetHook) pushActionTrigger(act *action.Action) {
 	if h.petService == nil {
 		return
 	}
@@ -351,7 +376,7 @@ func (h *LLMTagHook) pushActionTrigger(act *action.Action) {
 //	  },
 //	  "timestamp": 1712610000
 //	}
-func (h *LLMTagHook) pushEmotionChange(push emotion.EmotionPush) {
+func (h *PetHook) pushEmotionChange(push emotion.EmotionPush) {
 	if h.petService == nil {
 		return
 	}
@@ -383,7 +408,7 @@ func (h *LLMTagHook) pushEmotionChange(push emotion.EmotionPush) {
 //	  "timestamp": 1712610000,
 //	  "is_final": true
 //	}
-func (h *LLMTagHook) pushToolExecStart(tool string, args map[string]any) {
+func (h *PetHook) pushToolExecStart(tool string, args map[string]any) {
 	if h.petService == nil {
 		return
 	}
@@ -417,7 +442,7 @@ func (h *LLMTagHook) pushToolExecStart(tool string, args map[string]any) {
 //	  "timestamp": 1712610000,
 //	  "is_final": true
 //	}
-func (h *LLMTagHook) pushToolExecEnd(tool string, result *tools.ToolResult) {
+func (h *PetHook) pushToolExecEnd(tool string, result *tools.ToolResult) {
 	if h.petService == nil {
 		return
 	}
