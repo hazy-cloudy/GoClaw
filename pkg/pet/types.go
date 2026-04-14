@@ -23,6 +23,7 @@ const (
 	ActionOnboardingConfig = "onboarding_config" // 提交初始化配置
 	ActionCharacterGet     = "character_get"     // 获取角色配置
 	ActionCharacterUpdate  = "character_update"  // 更新角色配置
+	ActionCharacterSwitch  = "character_switch"  // 切换角色
 	ActionConfigGet        = "config_get"        // 获取应用配置
 	ActionConfigUpdate     = "config_update"     // 更新应用配置
 	ActionEmotionGet       = "emotion_get"       // 获取情绪状态
@@ -36,12 +37,13 @@ const (
 // PushType 推送类型
 const (
 	// PushType 推送类型
-	PushTypeAIChat        = "ai_chat"        // AI 聊天回复
-	PushTypeEmotionChange = "emotion_change" // 情绪变化
-	PushTypeActionTrigger = "action_trigger" // 动作触发
-	PushTypeInitStatus    = "init_status"    // 初始化状态（连接建立时推送）
-	PushTypeHeartbeat     = "heartbeat"      // 心跳保活
-	PushTypeAudio         = "audio"          // 音频播放
+	PushTypeAIChat          = "ai_chat"          // AI 聊天回复
+	PushTypeEmotionChange   = "emotion_change"   // 情绪变化
+	PushTypeActionTrigger   = "action_trigger"   // 动作触发
+	PushTypeInitStatus      = "init_status"      // 初始化状态（连接建立时推送）
+	PushTypeHeartbeat       = "heartbeat"        // 心跳保活
+	PushTypeCharacterSwitch = "character_switch" // 角色切换
+	PushTypeAudio           = "audio"            // 音频播放
 )
 
 // =============================================================================
@@ -104,6 +106,11 @@ type CharacterUpdateRequest struct {
 	PetName        string `json:"pet_name"`         // 桌宠名称
 	PetPersona     string `json:"pet_persona"`      // 性格描述
 	PetPersonaType string `json:"pet_persona_type"` // 性格类型
+}
+
+// CharacterSwitchRequest 角色切换请求数据
+type CharacterSwitchRequest struct {
+	CharacterID string `json:"character_id"` // 目标角色ID
 }
 
 // ConfigUpdateRequest 配置更新请求数据
@@ -208,6 +215,11 @@ type EmotionPush struct {
 type ActionPush struct {
 	Action     string `json:"action"`     // 动作名称
 	Expression string `json:"expression"` // 表情标识
+}
+
+// CharacterSwitchPush 角色切换推送数据
+type CharacterSwitchPush struct {
+	CharacterID string `json:"character_id"` // 切换后的角色ID
 }
 
 // StreamData 流式聊天数据
