@@ -9,26 +9,19 @@ import (
 	"github.com/sipeed/picoclaw/pkg/logger"
 )
 
-const (
-	CharactersFile = "characters.json" // 角色配置文件名
-	VoiceFile      = "voice.json"      // 语音配置文件名
-)
-
 // ConfigLoader 配置加载器
-// 负责从工作区加载和管理characters.json与voice.json配置
+// 负责从工作区加载和管理pet_config.json统一配置
 type ConfigLoader struct {
-	workspacePath string            // 工作区路径
-	characters    *CharactersConfig // 角色配置
-	voice         *VoiceConfig      // 语音配置
+	config        *PetConfig // 统一配置
+	workspacePath string     // 工作区目录路径
 }
 
 // NewConfigLoader 创建配置加载器实例
-// workspacePath: 工作区目录路径，配置文件存放于此
+// workspacePath: 工作区目录路径
 func NewConfigLoader(workspacePath string) *ConfigLoader {
 	return &ConfigLoader{
+		config:        nil,
 		workspacePath: workspacePath,
-		characters:    &CharactersConfig{},
-		voice:         &VoiceConfig{},
 	}
 }
 
@@ -37,35 +30,29 @@ func (l *ConfigLoader) WorkspacePath() string {
 	return l.workspacePath
 }
 
-// Load 加载所有配置文件
-// 会加载characters.json和voice.json，如果文件不存在则返回错误
+// Load 加载统一配置文件pet_config.json
 func (l *ConfigLoader) Load() error {
-	if err := l.loadCharacters(); err != nil {
-		return fmt.Errorf("failed to load characters: %w", err)
-	}
-	if err := l.loadVoice(); err != nil {
-		return fmt.Errorf("failed to load voice: %w", err)
-	}
-	return nil
-}
-
-// loadCharacters 从characters.json加载角色配置
-func (l *ConfigLoader) loadCharacters() error {
-	path := filepath.Join(l.workspacePath, CharactersFile)
-
+	path := filepath.Join(l.workspacePath, PetConfigFile)
+	logger.Debugf("pet config: loading config from %s", path)
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			// 文件不存在，使用默认配置
+			l.config = DefaultPetConfig()
+			logger.Infof("pet config: no config file found, using defaults")
+			return nil
+		}
 		return fmt.Errorf("failed to read %s: %w", path, err)
 	}
 
-	var cfg CharactersConfig
+	var cfg PetConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return fmt.Errorf("failed to parse %s: %w", path, err)
 	}
 
 	// 至少需要一个角色
 	if len(cfg.Characters) == 0 {
-		return fmt.Errorf("no characters found in %s", path)
+		cfg.Characters = []*CharacterConfig{DefaultCharacterConfig()}
 	}
 
 	// 如果没有设置激活角色，默认激活第一个
@@ -73,79 +60,98 @@ func (l *ConfigLoader) loadCharacters() error {
 		cfg.ActiveID = cfg.Characters[0].ID
 	}
 
-	l.characters = &cfg
-	logger.Infof("pet config: loaded %d characters, active_id=%s", len(cfg.Characters), cfg.ActiveID)
+	// 确保voice和app不为nil
+	if cfg.Voice == nil {
+		cfg.Voice = DefaultVoiceConfig()
+	}
+	if cfg.App == nil {
+		cfg.App = DefaultAppConfig()
+	}
+
+	l.config = &cfg
+
+	logger.Infof("pet config: loaded config, active_id=%s, voice_enabled=%v", cfg.ActiveID, cfg.App.VoiceEnabled)
 	return nil
 }
 
-// loadVoice 从voice.json加载语音配置
-func (l *ConfigLoader) loadVoice() error {
-	path := filepath.Join(l.workspacePath, VoiceFile)
+// Save 保存配置到pet_config.json
+func (l *ConfigLoader) Save() error {
 
-	data, err := os.ReadFile(path)
+	if l.config == nil {
+		return fmt.Errorf("config not loaded")
+	}
+
+	path := filepath.Join(l.workspacePath, PetConfigFile)
+
+	// 确保目录存在
+	if err := os.MkdirAll(l.workspacePath, 0755); err != nil {
+		return fmt.Errorf("failed to create workspace dir: %w", err)
+	}
+
+	data, err := json.MarshalIndent(l.config, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to read %s: %w", path, err)
-	}
-
-	var cfg VoiceConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return fmt.Errorf("failed to parse %s: %w", path, err)
-	}
-
-	l.voice = &cfg
-	logger.Infof("pet config: loaded voice config, default_model=%s, asr_enabled=%v", cfg.DefaultModel, cfg.ASREnabled)
-	return nil
-}
-
-// GetCharacters 返回角色配置
-func (l *ConfigLoader) GetCharacters() *CharactersConfig {
-	return l.characters
-}
-
-// GetVoice 返回语音配置
-func (l *ConfigLoader) GetVoice() *VoiceConfig {
-	return l.voice
-}
-
-// GetActiveCharacter 返回当前激活的角色配置
-func (l *ConfigLoader) GetActiveCharacter() *CharacterConfig {
-	for _, c := range l.characters.Characters {
-		if c.ID == l.characters.ActiveID {
-			return c
-		}
-	}
-	return l.characters.Characters[0]
-}
-
-// SaveCharacters 保存角色配置到文件
-func (l *ConfigLoader) SaveCharacters() error {
-	path := filepath.Join(l.workspacePath, CharactersFile)
-	return l.saveJSON(path, l.characters)
-}
-
-// SaveVoice 保存语音配置到文件
-func (l *ConfigLoader) SaveVoice() error {
-	path := filepath.Join(l.workspacePath, VoiceFile)
-	return l.saveJSON(path, l.voice)
-}
-
-// saveJSON 将数据以JSON格式保存到文件
-func (l *ConfigLoader) saveJSON(path string, v any) error {
-	data, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal: %w", err)
+		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		return fmt.Errorf("failed to write %s: %w", path, err)
 	}
 
+	logger.Infof("pet config: saved to %s", path)
 	return nil
+}
+
+// GetConfig 返回完整配置（只读）
+func (l *ConfigLoader) GetConfig() *PetConfig {
+	if l.config == nil {
+		return nil
+	}
+	cfg := *l.config // 返回副本
+	return &cfg
+}
+
+// GetActiveID 返回当前激活的角色ID（只读）
+func (l *ConfigLoader) GetActiveID() string {
+	if l.config == nil {
+		return ""
+	}
+	return l.config.ActiveID
+}
+
+// GetCharacters 返回角色列表（只读）
+func (l *ConfigLoader) GetCharacters() []*CharacterConfig {
+	if l.config == nil || l.config.Characters == nil {
+		return []*CharacterConfig{}
+	}
+	return l.config.Characters
+}
+
+// GetVoice 返回语音配置（只读）
+func (l *ConfigLoader) GetVoice() *VoiceConfig {
+	if l.config == nil || l.config.Voice == nil {
+		return DefaultVoiceConfig()
+	}
+	cfg := *l.config.Voice
+	return &cfg
+}
+
+// GetApp 返回应用配置（只读）
+func (l *ConfigLoader) GetApp() *AppConfig {
+	if l.config == nil || l.config.App == nil {
+		return DefaultAppConfig()
+	}
+	cfg := *l.config.App
+	return &cfg
 }
 
 // GetVoiceModelConfig 根据名称获取语音模型配置
 func (l *ConfigLoader) GetVoiceModelConfig(name string) *VoiceModelConfig {
-	for _, m := range l.voice.ModelList {
+
+	if l.config == nil || l.config.Voice == nil {
+		return nil
+	}
+
+	for _, m := range l.config.Voice.ModelList {
 		if m.Name == name {
 			return m
 		}
@@ -155,40 +161,108 @@ func (l *ConfigLoader) GetVoiceModelConfig(name string) *VoiceModelConfig {
 
 // GetDefaultVoiceModel 获取默认语音模型配置
 func (l *ConfigLoader) GetDefaultVoiceModel() *VoiceModelConfig {
-	if l.voice.DefaultModel == "" {
+
+	if l.config == nil || l.config.Voice == nil || l.config.Voice.DefaultModel == "" {
 		return nil
 	}
-	return l.GetVoiceModelConfig(l.voice.DefaultModel)
+
+	for _, m := range l.config.Voice.ModelList {
+		if m.Name == l.config.Voice.DefaultModel {
+			return m
+		}
+	}
+	return nil
+}
+
+// LoadCharacterPrivateConfig 加载角色私有配置
+func (l *ConfigLoader) LoadCharacterPrivateConfig(charID string) (*CharacterPrivateConfig, error) {
+
+	charPath := filepath.Join(l.workspacePath, WorkspacePath, charID, CharacterConfigFile)
+
+	data, err := os.ReadFile(charPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return DefaultCharacterPrivateConfig(charID), nil
+		}
+		return nil, fmt.Errorf("failed to read %s: %w", charPath, err)
+	}
+
+	var cfg CharacterPrivateConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse %s: %w", charPath, err)
+	}
+
+	return &cfg, nil
+}
+
+// SaveCharacterPrivateConfig 保存角色私有配置
+func (l *ConfigLoader) SaveCharacterPrivateConfig(cfg *CharacterPrivateConfig) error {
+	if cfg == nil {
+		return fmt.Errorf("config is nil")
+	}
+
+	charDir := filepath.Join(l.workspacePath, WorkspacePath, cfg.ID)
+	if err := os.MkdirAll(charDir, 0755); err != nil {
+		return fmt.Errorf("failed to create character dir: %w", err)
+	}
+
+	charPath := filepath.Join(charDir, CharacterConfigFile)
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal: %w", err)
+	}
+
+	if err := os.WriteFile(charPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write %s: %w", charPath, err)
+	}
+
+	return nil
 }
 
 // EnsureDefaultConfig 确保配置目录中存在默认配置文件
-// 如果文件不存在则创建默认配置
 func EnsureDefaultConfig(workspacePath string) error {
-	charactersPath := filepath.Join(workspacePath, CharactersFile)
-	voicePath := filepath.Join(workspacePath, VoiceFile)
+	configPath := filepath.Join(workspacePath, PetConfigFile)
 
-	// 创建默认characters.json（如果不存在）
-	if _, err := os.Stat(charactersPath); os.IsNotExist(err) {
-		defaultCfg := &CharactersConfig{
-			Characters: []*CharacterConfig{DefaultCharacterConfig()},
-			ActiveID:   "pet_001",
-		}
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		defaultCfg := DefaultPetConfig()
 		data, _ := json.MarshalIndent(defaultCfg, "", "  ")
-		if err := os.WriteFile(charactersPath, data, 0644); err != nil {
-			return fmt.Errorf("failed to create default %s: %w", charactersPath, err)
+		if err := os.WriteFile(configPath, data, 0644); err != nil {
+			return fmt.Errorf("failed to create default %s: %w", configPath, err)
 		}
-		logger.Infof("pet config: created default %s", charactersPath)
+		logger.Infof("pet config: created default %s", configPath)
 	}
 
-	// 创建默认voice.json（如果不存在）
-	if _, err := os.Stat(voicePath); os.IsNotExist(err) {
-		defaultCfg := DefaultVoiceConfig()
-		data, _ := json.MarshalIndent(defaultCfg, "", "  ")
-		if err := os.WriteFile(voicePath, data, 0644); err != nil {
-			return fmt.Errorf("failed to create default %s: %w", voicePath, err)
-		}
-		logger.Infof("pet config: created default %s", voicePath)
+	// 同时确保私有配置目录存在
+	privatePath := filepath.Join(workspacePath, "workspaces")
+	if err := os.MkdirAll(privatePath, 0755); err != nil {
+		return fmt.Errorf("failed to create workspaces dir: %w", err)
 	}
 
+	return nil
+}
+
+// SavePetConfig 保存完整的 PetConfig 到文件
+func (l *ConfigLoader) SavePetConfig(cfg *PetConfig) error {
+	if cfg == nil {
+		return fmt.Errorf("config is nil")
+	}
+
+	path := filepath.Join(l.workspacePath, PetConfigFile)
+
+	// 确保目录存在
+	if err := os.MkdirAll(l.workspacePath, 0755); err != nil {
+		return fmt.Errorf("failed to create workspace dir: %w", err)
+	}
+
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("failed to write %s: %w", path, err)
+	}
+
+	logger.Infof("pet config: saved to %s", path)
 	return nil
 }
