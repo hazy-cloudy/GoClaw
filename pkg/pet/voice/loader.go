@@ -62,7 +62,6 @@ func (l *Loader) Load() error {
 		return fmt.Errorf("voice model %s is disabled", modelName)
 	}
 
-	// 解析环境变量中的API Key
 	// 创建TTS提供者（目前仅支持Minimax）
 	l.provider = newMinimaxTTS(modelCfg.APIBase, modelCfg.APIKey, modelCfg.Model)
 	logger.Infof("pet voice: loaded TTS provider, model=%s", modelCfg.Model)
