@@ -1,0 +1,47 @@
+{
+  "characters": [
+    {
+      "id": "pet_001",
+      "name": "艾莉",
+      "persona": "温柔体贴，善于关心他人，喜欢用简短的话语表达关心",
+      "persona_type": "gentle",
+      "avatar": "default",
+      "emotion_state": {
+        "joy": 60,
+        "anger": 50,
+        "sadness": 50,
+        "disgust": 50,
+        "surprise": 50,
+        "fear": 50
+      },
+      "mbti": {
+        "ie": 45,
+        "sn": 50,
+        "tf": 55,
+        "jp": 50
+      }
+    },
+    {
+      "id": "pet_002",
+      "name": "小智",
+      "persona": "活泼可爱，精力充沛，喜欢开玩笑和撒娇，说话充满活力",
+      "persona_type": "playful",
+      "avatar": "default",
+      "emotion_state": {
+        "joy": 70,
+        "anger": 50,
+        "sadness": 50,
+        "disgust": 50,
+        "surprise": 50,
+        "fear": 50
+      },
+      "mbti": {
+        "ie": 55,
+        "sn": 50,
+        "tf": 50,
+        "jp": 45
+      }
+    }
+  ],
+  "active_id": "pet_001"
+}
