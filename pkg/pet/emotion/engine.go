@@ -141,6 +141,14 @@ func (e *EmotionEngine) GetVolatility() float64 {
 	return e.volatility
 }
 
+// SetVolatility 设置波动系数
+// 波动系数影响情绪变化的幅度（越大变化越剧烈）
+func (e *EmotionEngine) SetVolatility(v float64) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.volatility = v
+}
+
 // GetLastUpdate 获取最后更新时间
 // 用于计算衰减
 func (e *EmotionEngine) GetLastUpdate() time.Time {
