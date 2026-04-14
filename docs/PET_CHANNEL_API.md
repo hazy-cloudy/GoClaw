@@ -1,7 +1,7 @@
 # Pet Channel API 接口文档
 
-> 版本：v2.0  
-> 日期：2026-04-10  
+> 版本：v2.1  
+> 日期：2026-04-14  
 > 协议：WebSocket + JSON
 
 ---
@@ -265,6 +265,87 @@ LLM 解析到动作标签时推送。
 
 ---
 
+### 3.6 character_switch - 角色切换
+
+角色切换成功后，所有客户端会收到此推送。
+
+```json
+{
+  "type": "push",
+  "push_type": "character_switch",
+  "data": {
+    "character_id": "pet_002"
+  },
+  "timestamp": 1712610000
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| character_id | string | 切换后的角色ID |
+
+---
+
+### 3.7 ai_audio - 语音合成音频
+
+当 `voice_enabled` 启用时，AI 回复会同时触发语音合成，并将音频数据推送客户端播放。
+
+```json
+{
+  "type": "push",
+  "push_type": "ai_audio",
+  "data": {
+    "chat_id": 1,
+    "type": "audio",
+    "text": "//uQxAAAAs3gAAFBYy...",
+    "is_final": false
+  },
+  "timestamp": 1712610000,
+  "is_final": false
+}
+```
+
+**最终推送（结束标记）**：
+
+```json
+{
+  "type": "push",
+  "push_type": "ai_audio",
+  "data": {
+    "chat_id": 1,
+    "type": "audio",
+    "text": "",
+    "is_final": true
+  },
+  "timestamp": 1712610000,
+  "is_final": true
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| chat_id | int | 聊天会话ID |
+| type | string | 内容类型：`audio`=音频块, `error`=错误信息 |
+| text | string | Base64 编码的音频数据（MP3 格式），`is_final=true` 时为空 |
+| is_final | bool | 是否为最后一个音频块 |
+
+**音频解码示例**（JavaScript）：
+
+```javascript
+// 接收 audio 推送
+const audioData = base64ToArrayBuffer(msg.data.text);
+const audioBlob = new Blob([audioData], { type: 'audio/mpeg' });
+const audioUrl = URL.createObjectURL(audioBlob);
+const audio = new Audio(audioUrl);
+audio.play();
+```
+
+---
+
 ## 四、请求接口
 
 ### 4.1 chat - 发送聊天消息
@@ -386,6 +467,18 @@ LLM 解析到动作标签时推送。
 }
 ```
 
+**字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| pet_id | string | 桌宠ID |
+| pet_name | string | 桌宠名称 |
+| pet_persona | string | 性格描述 |
+| pet_persona_type | string | 性格类型 |
+| avatar | string | 头像/模型ID |
+| created_at | string | 创建时间（ISO 8601） |
+| updated_at | string | 更新时间（ISO 8601） |
+
 ---
 
 ### 4.4 character_update - 更新角色配置
@@ -428,7 +521,44 @@ LLM 解析到动作标签时推送。
 
 ---
 
-### 4.5 config_get - 获取应用配置
+### 4.5 character_switch - 切换角色
+
+切换当前激活的桌宠角色。
+
+**请求**：
+
+```json
+{
+  "action": "character_switch",
+  "data": {
+    "character_id": "pet_002"
+  }
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "character_switch",
+  "data": {
+    "character_id": "pet_002"
+  }
+}
+```
+
+**推送**：角色切换成功后，所有客户端会收到 `character_switch` 推送，详见 3.6
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| character_id | string | 是 | 目标角色ID |
+
+---
+
+### 4.6 config_get - 获取应用配置
 
 获取应用功能开关和设置。
 
@@ -471,7 +601,7 @@ LLM 解析到动作标签时推送。
 
 ---
 
-### 4.6 config_update - 更新应用配置
+### 4.7 config_update - 更新应用配置
 
 修改应用功能设置。
 
@@ -507,7 +637,7 @@ LLM 解析到动作标签时推送。
 
 ---
 
-### 4.7 emotion_get - 获取情绪状态
+### 4.8 emotion_get - 获取情绪状态
 
 获取桌宠当前的情绪状态。
 
@@ -556,7 +686,7 @@ LLM 解析到动作标签时推送。
 
 ---
 
-### 4.8 health_check - 健康检查
+### 4.9 health_check - 健康检查
 
 检查服务健康状态和连接状态。
 
@@ -659,6 +789,25 @@ ws.onmessage = function(event) {
     return;
   }
 
+  // 处理角色切换推送
+  if (msg.push_type === 'character_switch') {
+    console.log('Character switched to:', msg.data.character_id);
+    reloadCharacter(msg.data.character_id);
+    return;
+  }
+
+  // 处理语音音频推送
+  if (msg.push_type === 'ai_audio') {
+    const data = msg.data;
+    if (data.type === 'audio' && data.text) {
+      const audioData = base64ToArrayBuffer(data.text);
+      playAudioChunk(audioData);
+    } else if (data.type === 'error') {
+      console.error('Audio error:', data.text);
+    }
+    return;
+  }
+
   // 处理心跳
   if (msg.push_type === 'heartbeat') {
     console.log('Heartbeat:', msg.data.timestamp);
@@ -706,6 +855,17 @@ async def client():
             elif data.get('push_type') == 'action_trigger':
                 print(f"\n动作: {data['data']['action']}")
 
+            elif data.get('push_type') == 'character_switch':
+                print(f"\n角色切换: {data['data']['character_id']}")
+
+            elif data.get('push_type') == 'ai_audio':
+                audio_data = data.get('data', {})
+                if audio_data.get('type') == 'audio' and audio_data.get('text'):
+                    audio_bytes = base64.b64decode(audio_data['text'])
+                    play_audio_chunk(audio_bytes)
+                elif audio_data.get('type') == 'error':
+                    print(f"\n音频错误: {audio_data['text']}")
+
 async def send_chat(ws, text):
     await ws.send(json.dumps({
         "action": "chat",
@@ -725,6 +885,7 @@ async def send_chat(ws, text):
 | onboarding_config | 提交初始化配置 | 首次启动时提交配置 |
 | character_get | 获取角色配置 | 查看当前角色 |
 | character_update | 更新角色配置 | 修改角色设置 |
+| character_switch | 切换角色 | 切换当前激活的角色 |
 | config_get | 获取应用配置 | 查看应用设置 |
 | config_update | 更新应用配置 | 修改应用设置 |
 | emotion_get | 获取情绪状态 | 查看当前情绪 |
@@ -738,6 +899,8 @@ async def send_chat(ws, text):
 | ai_chat | AI 回复时 | 流式推送 AI 回复文本 |
 | emotion_change | 情绪变化时 | 推送情绪状态更新 |
 | action_trigger | LLM 解析到动作时 | 推送动作触发 |
+| character_switch | 角色切换后 | 推送切换后的角色ID |
+| ai_audio | 语音合成完成 | 推送音频数据用于播放 |
 | heartbeat | 每 30 秒 | 保活检测 |
 
 ---
