@@ -2038,7 +2038,7 @@ turnLoop:
 			}
 
 			streamer, _ := al.bus.GetStreamer(providerCtx, ts.channel, ts.chatID)
-			usesStreaming := streamer != nil && iteration == 1
+			usesStreaming := streamer != nil
 
 			logger.DebugCF("agent", "Streaming check", map[string]any{
 				"streamer":      streamer != nil,

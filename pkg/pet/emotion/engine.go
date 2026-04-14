@@ -332,11 +332,12 @@ func (e *EmotionEngine) ApplyDecay(elapsed time.Duration) {
 // 算法：
 //
 //	找出六大情绪中偏离中性值50最远的情绪
-//	即 abs(score - 50) 最大的那个
+//	- 如果 score >= 50，deviation = score - 50
+//	- 如果 score < 50，deviation = 50 - score（视为相反情绪）
 //
 // 示例：
 //   - joy=70, anger=50, others=50 → 返回 ("joy", 70)
-//   - joy=60, sad=80, others=50 → 返回 ("sadness", 80) 因为|80-50|=30 > |60-50|=10
+//   - joy=30, anger=50, others=50 → 返回 ("joy", 30)，因为 joy=30 视为 sadness，deviation=20
 func (e *EmotionEngine) GetDominantEmotion() (string, int) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -356,7 +357,13 @@ func (e *EmotionEngine) GetDominantEmotion() (string, int) {
 
 	// 遍历所有情绪，找出偏离中性最远的
 	for emo, score := range emotions {
-		deviation := abs(score - NeutralValue)
+		var deviation int
+		if score >= NeutralValue {
+			deviation = score - NeutralValue
+		} else {
+			deviation = NeutralValue - score
+		}
+
 		if deviation > maxDeviation {
 			maxDeviation = deviation
 			dominant = emo
@@ -412,34 +419,53 @@ func (e *EmotionEngine) ShouldPush() (bool, EmotionPush) {
 // 用于注入LLM，让LLM知道当前处于某种强烈情绪状态
 //
 // 返回格式：
-//   - score > 80: "【当前状态】：非常{情绪中文}"
-//   - score < 20: "【当前状态】：有点{情绪中文}"
+//   - score > 80: "【当前状态】：非常{情绪描述}"
+//   - score < 20: "【当前状态】：很不开心/很平静等
 func (e *EmotionEngine) getThresholdPrompt(emotion string, score int) string {
-	desc := emotionToChinese(emotion)
-
-	if score > ThresholdHigh {
-		return "【当前状态】：非常" + desc
-	}
-	return "【当前状态】：有点" + desc
+	desc := emotionDescriptionByScore(emotion, score)
+	return "【当前状态】：" + desc
 }
 
-// emotionToChinese 情绪标签转中文描述
-func emotionToChinese(emotion string) string {
+// emotionDescriptionByScore 根据情绪类型和分数返回中文描述
+func emotionDescriptionByScore(emotion string, score int) string {
+	idx := emotionScoreToIndex(score)
+
 	switch emotion {
 	case EmotionJoy:
-		return "开心"
+		descs := []string{"很不开心", "有点不开心", "有点开心", "很开心"}
+		return descs[idx]
 	case EmotionAnger:
-		return "生气"
+		descs := []string{"很平静", "有点生气", "比较生气", "非常生气"}
+		return descs[idx]
 	case EmotionSadness:
-		return "难过"
+		descs := []string{"很平静", "有点难过", "比较难过", "非常难过"}
+		return descs[idx]
 	case EmotionDisgust:
-		return "厌恶"
+		descs := []string{"很平静", "有点厌恶", "比较厌恶", "非常厌恶"}
+		return descs[idx]
 	case EmotionSurprise:
-		return "惊讶"
+		descs := []string{"很平静", "有点惊讶", "比较惊讶", "非常惊讶"}
+		return descs[idx]
 	case EmotionFear:
-		return "害怕"
+		descs := []string{"很平静", "有点害怕", "比较害怕", "非常害怕"}
+		return descs[idx]
 	default:
 		return "平静"
+	}
+}
+
+// emotionScoreToIndex 将分数转换为描述索引
+// 0=<20, 1=20-50, 2=50-80, 3=>80
+func emotionScoreToIndex(score int) int {
+	switch {
+	case score < 20:
+		return 0
+	case score < 50:
+		return 1
+	case score < 80:
+		return 2
+	default:
+		return 3
 	}
 }
 

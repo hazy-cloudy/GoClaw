@@ -2,67 +2,62 @@ package pet
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/sipeed/picoclaw/pkg/agent"
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/pet/characters"
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
-// CharacterHook 角色人格拦截器
-// 功能：
-// 1. 在每次 LLM 调用前，将角色人格信息注入到 system prompt
-// 2. 对所有 channel 生效（不仅是 pet channel）
-// 3. 通过读取全局 CharacterStore 获取当前人格配置
 type CharacterHook struct {
-	characterStore *CharacterStore // 角色配置存储（全局单例）
+	charManager *characters.Manager
 }
 
-// NewCharacterHook 创建 CharacterHook 实例
-func NewCharacterHook(store *CharacterStore) *CharacterHook {
+func NewCharacterHook(charManager *characters.Manager) *CharacterHook {
 	return &CharacterHook{
-		characterStore: store,
+		charManager: charManager,
 	}
 }
 
-// BeforeLLM LLM 调用前拦截
-// 将角色人格信息作为 system message 注入到消息列表最前面
 func (h *CharacterHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (*agent.LLMHookRequest, agent.HookDecision, error) {
 	if req == nil || req.Messages == nil {
 		return req, agent.HookDecision{Action: agent.HookActionContinue}, nil
 	}
 
-	// 获取角色人格 prompt
-	personaPrompt := h.characterStore.GetPersonaPrompt()
-	if personaPrompt == "" {
+	char := h.charManager.GetCurrent()
+	if char == nil {
 		return req, agent.HookDecision{Action: agent.HookActionContinue}, nil
 	}
 
-	// 构建 system message
+	personaPrompt := h.buildPersonaPrompt(char)
+
 	personaMsg := providers.Message{
 		Role:    "system",
 		Content: personaPrompt,
 	}
 
-	// 将人格信息插入到消息列表最前面
-	// 这样人格信息会在所有其他 system prompt 之前
 	req.Messages = append([]providers.Message{personaMsg}, req.Messages...)
 
-	// 记录人格注入日志
-	logger.InfoCF("pet", "CharacterHook: 已注入人格Prompt", map[string]any{
+	logger.InfoCF("pet", "CharacterHook: injected persona prompt", map[string]any{
+		"character":      char.Name,
 		"persona_length": len(personaPrompt),
-		"persona_preview": func() string {
-			if len(personaPrompt) > 200 {
-				return personaPrompt[:200] + "..."
-			}
-			return personaPrompt
-		}(),
-		"total_messages": len(req.Messages),
 	})
 
 	return req, agent.HookDecision{Action: agent.HookActionContinue}, nil
 }
 
-// AfterLLM LLM 调用后拦截（暂未使用，保留扩展性）
+func (h *CharacterHook) buildPersonaPrompt(char *characters.Character) string {
+	return fmt.Sprintf(`【桌宠角色信息】
+姓名：%s
+性格类型：%s
+
+性格描述：
+%s
+
+回复风格应体现以上人格特征，现在你作为一位桌宠角色，正在和用户聊天，聊天需要语言简单，就几个字好，在其他事情上就可以正常回答十几个字。`, char.Name, char.PersonaType, char.Persona)
+}
+
 func (h *CharacterHook) AfterLLM(ctx context.Context, resp *agent.LLMHookResponse) (*agent.LLMHookResponse, agent.HookDecision, error) {
 	return resp, agent.HookDecision{Action: agent.HookActionContinue}, nil
 }
