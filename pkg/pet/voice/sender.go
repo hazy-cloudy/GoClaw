@@ -32,7 +32,7 @@ func (s *Sender) SendAudioChunk(sessionID string, chatID int64, chunk AudioChunk
 		"is_final": chunk.IsLast,                                  // 标记是否为最后一块
 	}
 
-	if err := s.sendFunc(sessionID, "ai_chat", data); err != nil {
+	if err := s.sendFunc(sessionID, "ai_audio", data); err != nil {
 		logger.WarnCF("pet-voice", "failed to send audio chunk", map[string]any{
 			"session_id": sessionID,
 			"chat_id":    chatID,
@@ -64,5 +64,5 @@ func (s *Sender) SendError(sessionID string, chatID int64, errMsg string) error 
 		"text":    errMsg,
 	}
 
-	return s.sendFunc(sessionID, "ai_chat", data)
+	return s.sendFunc(sessionID, "ai_audio", data)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/sipeed/picoclaw/pkg/logger"
 	"sync"
 	"time"
 
@@ -22,13 +23,12 @@ type PetService struct {
 	config      PetServiceConfig
 	pushHandler PushHandler
 
-	configLoader  *config.ConfigLoader
+	configManager *config.Manager
 	charManager   *characters.Manager
 	actionManager *action.ActionManager
 	memoryStore   *memory.Store
 	voiceLoader   *voice.Loader
 
-	appConfig    AppConfig
 	connSessions map[string]string
 
 	mu sync.RWMutex
@@ -48,28 +48,26 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 		msgBus:        msgBus,
 		config:        cfg,
 		actionManager: action.NewActionManager(cfg.WorkspacePath),
-		appConfig:     AppConfig{EmotionEnabled: true, ReminderEnabled: true, ProactiveCare: true, Language: "zh-CN"},
 		connSessions:  make(map[string]string),
 		ctx:           ctx,
 		cancel:        cancel,
 	}
-
-	if cfg.WorkspacePath != "" {
-		s.configLoader = config.NewConfigLoader(cfg.WorkspacePath)
-		if err := s.configLoader.Load(); err != nil {
-			fmt.Printf("pet: failed to load config: %v\n", err)
-			return nil, err
+	workspacePath := cfg.WorkspacePath
+	if workspacePath != "" {
+		logger.Debugf("pet: workspacePath=%s", workspacePath)
+		s.configManager = config.NewManager(workspacePath)
+		if s.configManager == nil {
+			return nil, fmt.Errorf("failed to create config manager")
 		}
 
-		charCfg := s.configLoader.GetCharacters()
 		var err error
-		s.charManager, err = characters.NewManager(charCfg)
+		s.charManager, err = characters.NewManager(s.configManager.GetCharacters(), s.configManager)
 		if err != nil {
 			fmt.Printf("pet: failed to create character manager: %v\n", err)
 			return nil, err
 		}
 
-		s.voiceLoader = voice.NewLoader(s.configLoader.GetVoice())
+		s.voiceLoader = voice.NewLoader(s.configManager.GetVoice())
 		if err := s.voiceLoader.Load(); err != nil {
 			fmt.Printf("pet: failed to load voice: %v\n", err)
 		}
@@ -120,11 +118,25 @@ func (s *PetService) Stop() {
 	if s.memoryStore != nil {
 		s.memoryStore.Close()
 	}
+	s.Shutdown()
 	fmt.Println("pet: PetService stopped")
 }
 
-func (s *PetService) ConfigLoader() *config.ConfigLoader {
-	return s.configLoader
+func (s *PetService) Shutdown() {
+	if s.charManager != nil {
+		if err := s.charManager.SavePrivateConfig(); err != nil {
+			fmt.Printf("pet: failed to save private config: %v\n", err)
+		}
+	}
+	if s.configManager != nil {
+		if err := s.configManager.Save(); err != nil {
+			fmt.Printf("pet: failed to save config: %v\n", err)
+		}
+	}
+}
+
+func (s *PetService) ConfigManager() *config.Manager {
+	return s.configManager
 }
 
 func (s *PetService) CharManager() *characters.Manager {
@@ -336,9 +348,8 @@ func (s *PetService) handleOnboardingConfig(sessionID string, req Request) error
 		char.Name = data.PetName
 		char.Persona = data.PetPersona
 		char.PersonaType = data.PetPersonaType
-		if err := s.configLoader.SaveCharacters(); err != nil {
-			return s.sendError(sessionID, req.Action, err.Error())
-		}
+		s.charManager.UpdateCharacter(char.ID, data.PetName, data.PetPersona, data.PetPersonaType)
+		// 保存会在 shutdown 时统一进行
 	}
 
 	return s.sendResponse(sessionID, req.Action, OnboardingConfigResponse{PetID: char.ID})
@@ -377,9 +388,7 @@ func (s *PetService) handleCharacterUpdate(sessionID string, req Request) error 
 		if data.PetPersonaType != "" {
 			char.PersonaType = data.PetPersonaType
 		}
-		if err := s.configLoader.SaveCharacters(); err != nil {
-			return s.sendError(sessionID, req.Action, err.Error())
-		}
+		s.charManager.UpdateCharacter(char.ID, data.PetName, data.PetPersona, data.PetPersonaType)
 		data.PetID = char.ID
 	}
 
@@ -396,10 +405,6 @@ func (s *PetService) handleCharacterSwitch(sessionID string, req Request) error 
 		return s.sendError(sessionID, req.Action, err.Error())
 	}
 
-	if err := s.configLoader.SaveCharacters(); err != nil {
-		return s.sendError(sessionID, req.Action, err.Error())
-	}
-
 	s.sendPush(sessionID, PushTypeCharacterSwitch, CharacterSwitchPush{
 		CharacterID: s.charManager.GetCurrentID(),
 	})
@@ -408,17 +413,7 @@ func (s *PetService) handleCharacterSwitch(sessionID string, req Request) error 
 }
 
 func (s *PetService) handleConfigGet(sessionID string, req Request) error {
-	s.mu.RLock()
-	cfg := AppConfig{
-		EmotionEnabled:           s.appConfig.EmotionEnabled,
-		ReminderEnabled:          s.appConfig.ReminderEnabled,
-		ProactiveCare:            s.appConfig.ProactiveCare,
-		ProactiveIntervalMinutes: s.appConfig.ProactiveIntervalMinutes,
-		VoiceEnabled:             s.appConfig.VoiceEnabled,
-		Language:                 s.appConfig.Language,
-	}
-	s.mu.RUnlock()
-
+	cfg := s.configManager.GetApp()
 	return s.sendResponse(sessionID, req.Action, cfg)
 }
 
@@ -428,34 +423,28 @@ func (s *PetService) handleConfigUpdate(sessionID string, req Request) error {
 		return s.sendError(sessionID, req.Action, "invalid config data")
 	}
 
-	s.mu.Lock()
+	cfg := s.configManager.GetApp()
+
 	if data.EmotionEnabled != nil {
-		s.appConfig.EmotionEnabled = *data.EmotionEnabled
+		cfg.EmotionEnabled = *data.EmotionEnabled
 	}
 	if data.ReminderEnabled != nil {
-		s.appConfig.ReminderEnabled = *data.ReminderEnabled
+		cfg.ReminderEnabled = *data.ReminderEnabled
 	}
 	if data.ProactiveCare != nil {
-		s.appConfig.ProactiveCare = *data.ProactiveCare
+		cfg.ProactiveCare = *data.ProactiveCare
 	}
 	if data.ProactiveIntervalMinutes != nil {
-		s.appConfig.ProactiveIntervalMinutes = *data.ProactiveIntervalMinutes
+		cfg.ProactiveIntervalMinutes = *data.ProactiveIntervalMinutes
 	}
 	if data.VoiceEnabled != nil {
-		s.appConfig.VoiceEnabled = *data.VoiceEnabled
+		cfg.VoiceEnabled = *data.VoiceEnabled
 	}
 	if data.Language != nil {
-		s.appConfig.Language = *data.Language
+		cfg.Language = *data.Language
 	}
-	cfg := AppConfig{
-		EmotionEnabled:           s.appConfig.EmotionEnabled,
-		ReminderEnabled:          s.appConfig.ReminderEnabled,
-		ProactiveCare:            s.appConfig.ProactiveCare,
-		ProactiveIntervalMinutes: s.appConfig.ProactiveIntervalMinutes,
-		VoiceEnabled:             s.appConfig.VoiceEnabled,
-		Language:                 s.appConfig.Language,
-	}
-	s.mu.Unlock()
+
+	s.configManager.SetAppConfig(cfg)
 
 	return s.sendResponse(sessionID, req.Action, cfg)
 }
@@ -545,8 +534,8 @@ func (s *PetService) sendPush(sessionID, pushType string, data interface{}) erro
 	return nil
 }
 
-func (s *PetService) AppConfig() AppConfig {
-	return s.appConfig
+func (s *PetService) AppConfig() *config.AppConfig {
+	return s.configManager.GetApp()
 }
 
 func mustMarshal(v interface{}) json.RawMessage {

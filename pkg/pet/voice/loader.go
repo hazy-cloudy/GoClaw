@@ -63,8 +63,10 @@ func (l *Loader) Load() error {
 	}
 
 	// 创建TTS提供者（目前仅支持Minimax）
-	l.provider = newMinimaxTTS(modelCfg.APIBase, modelCfg.APIKey, modelCfg.Model)
-	logger.Infof("pet voice: loaded TTS provider, model=%s", modelCfg.Model)
+	apiKey := resolveEnvVar(modelCfg.APIKey)
+	l.provider = newMinimaxTTS(modelCfg.APIBase, apiKey, modelCfg.Model)
+	logger.Infof("pet voice: loaded TTS provider, apiKey=%s, model=%s",
+		apiKey, modelCfg.Model)
 	return nil
 }
 

@@ -161,16 +161,6 @@ func DefaultMBTI() MBTIConfig {
 	return MBTIConfig{IE: 50, SN: 50, TF: 50, JP: 50}
 }
 
-// AppConfig 应用配置
-type AppConfig struct {
-	EmotionEnabled           bool   `json:"emotion_enabled"`            // 是否启用情绪表情
-	ReminderEnabled          bool   `json:"reminder_enabled"`           // 是否启用提醒功能
-	ProactiveCare            bool   `json:"proactive_care"`             // 是否启用主动关怀
-	ProactiveIntervalMinutes int    `json:"proactive_interval_minutes"` // 主动关怀间隔（分钟）
-	VoiceEnabled             bool   `json:"voice_enabled"`              // 是否启用语音
-	Language                 string `json:"language"`                   // 语言设置
-}
-
 // EmotionState 情绪状态
 type EmotionState struct {
 	PetID       string `json:"pet_id"`      // 桌宠ID

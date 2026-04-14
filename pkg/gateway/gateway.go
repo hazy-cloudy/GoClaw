@@ -43,7 +43,6 @@ import (
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/media"
 	"github.com/sipeed/picoclaw/pkg/pet"
-	"github.com/sipeed/picoclaw/pkg/pet/emotion"
 	"github.com/sipeed/picoclaw/pkg/pid"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/state"
@@ -197,24 +196,9 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 			if pc, ok := petChannel.(*petchannel.PetChannel); ok {
 				svc := pc.Service()
 
-				petCharacterHook := pet.NewCharacterHook(svc.CharManager())
-				agentLoop.MountHook(agent.NamedHook("pet_character", petCharacterHook))
-				logger.InfoCF("pet", "Pet character hook registered", nil)
-
-				// 注册 Pet LLM Tag Hook 到 AgentLoop
-				// 用于解析LLM输出中的情绪、动作、MBTI标签
-				petLLMTagHook := pet.NewLLMTagHook(
-					func() *emotion.EmotionEngine {
-						if char := svc.CharManager().GetCurrent(); char != nil {
-							return char.GetEmotionEngine()
-						}
-						return nil
-					},
-					svc.ActionManager(),
-					svc,
-				)
-				agentLoop.MountHook(agent.NamedHook("pet_llm_tag", petLLMTagHook))
-				logger.InfoCF("pet", "Pet LLM tag hook registered", nil)
+				petHook := pet.NewPetHook(svc.CharManager(), svc.ActionManager(), svc)
+				agentLoop.MountHook(agent.NamedHook("pet", petHook))
+				logger.InfoCF("pet", "Pet hook registered", nil)
 			}
 		}
 	}
