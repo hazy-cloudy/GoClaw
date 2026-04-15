@@ -1,11 +1,10 @@
 package voice
 
 import (
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
-
-	"github.com/sipeed/picoclaw/pkg/logger"
 )
 
 // Synthesizer 语音合成器
@@ -39,7 +38,9 @@ var (
 // 支持格式: [text:要说的内容] 或 [text:内容]-[voice:speed:1.2,emotion:happy]
 // 解析后调用TTS提供者合成语音，并通过sender发送音频块
 func (s *Synthesizer) ParseAndSynthesize(sessionID string, chatID int64, content string, emotion string) error {
+	fmt.Printf("pet-voice: ParseAndSynthesize called, content=%s\n", content)
 	texts := s.parseTextTags(content)
+	fmt.Printf("pet-voice: parseTextTags returned %d texts\n", len(texts))
 	if len(texts) == 0 {
 		return nil
 	}
@@ -59,30 +60,28 @@ func (s *Synthesizer) ParseAndSynthesize(sessionID string, chatID int64, content
 			params.Vol = 1.0
 		}
 
-		logger.DebugCF("pet-voice", "synthesizing", map[string]any{
-			"session_id": sessionID,
-			"chat_id":    chatID,
-			"text":       parsed.Text,
-			"params":     params,
-		})
+		fmt.Printf("pet-voice: synthesizing, text=%s\n", parsed.Text)
 
 		ch, err := s.provider.Synthesize(parsed.Text, params)
 		if err != nil {
-			logger.WarnCF("pet-voice", "synthesize failed", map[string]any{
-				"session_id": sessionID,
-				"error":      err,
-			})
+			fmt.Printf("pet-voice: synthesize failed, error=%v\n", err)
 			s.sender.SendError(sessionID, chatID, err.Error())
 			continue
 		}
 
+		fmt.Printf("pet-voice: waiting for audio chunks...\n")
 		// 从通道读取音频块并发送
 		for chunk := range ch {
+			fmt.Printf("pet-voice: received chunk, size=%d, isLast=%v\n", len(chunk.Data), chunk.IsLast)
 			if err := s.sender.SendAudioChunk(sessionID, chatID, chunk); err != nil {
-				logger.WarnCF("pet-voice", "send audio chunk failed", map[string]any{"error": err})
+				fmt.Printf("pet-voice: send audio chunk failed, error=%v\n", err)
 				break
 			}
+			if chunk.IsLast {
+				fmt.Printf("pet-voice: received final chunk, done\n")
+			}
 		}
+		fmt.Printf("pet-voice: chunk channel closed, done\n")
 	}
 
 	return nil
@@ -91,12 +90,25 @@ func (s *Synthesizer) ParseAndSynthesize(sessionID string, chatID int64, content
 // parseTextTags 解析文本中的标签
 // 支持格式: [text:xxx](-[voice:yyy])?
 // voice部分是可选的
+// 如果没有匹配到任何标签，则返回整个内容作为纯文本
 func (s *Synthesizer) parseTextTags(content string) []ParsedText {
 	var results []ParsedText
 
 	// 组合正则: [text:内容](-[voice:参数])?
 	combinedRegex := regexp.MustCompile(`\[text:([^\]]+)\](?:-\[voice:([^\]]+)\])?`)
 	matches := combinedRegex.FindAllStringSubmatch(content, -1)
+
+	// 如果没有匹配到任何 [text:] 标签，将整个内容作为纯文本返回
+	if len(matches) == 0 {
+		cleaned := CleanTextTags(content)
+		if cleaned != "" {
+			results = append(results, ParsedText{
+				Text:   cleaned,
+				Params: DefaultVoiceParams(),
+			})
+		}
+		return results
+	}
 
 	for _, match := range matches {
 		if len(match) < 2 {

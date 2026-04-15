@@ -71,6 +71,11 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 		if err := s.voiceLoader.Load(); err != nil {
 			fmt.Printf("pet: failed to load voice: %v\n", err)
 		}
+		if s.voiceLoader.GetProvider() != nil {
+			fmt.Println("pet: voice provider loaded successfully")
+		} else {
+			fmt.Println("pet: voice provider is nil after loading")
+		}
 
 		s.memoryStore, err = memory.NewStore(cfg.WorkspacePath)
 		if err != nil {

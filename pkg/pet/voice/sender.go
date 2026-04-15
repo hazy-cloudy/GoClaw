@@ -2,6 +2,7 @@ package voice
 
 import (
 	"encoding/base64"
+	"fmt"
 
 	"github.com/sipeed/picoclaw/pkg/logger"
 )
@@ -25,14 +26,17 @@ func (s *Sender) SendAudioChunk(sessionID string, chatID int64, chunk AudioChunk
 		return nil
 	}
 
+	encoded := base64.StdEncoding.EncodeToString(chunk.Data)
+	fmt.Printf("pet-voice: SendAudioChunk chunk.Data_len=%d encoded_len=%d isLast=%v\n", len(chunk.Data), len(encoded), chunk.IsLast)
+
 	data := map[string]any{
 		"chat_id":  chatID,
 		"type":     "audio",
-		"text":     base64.StdEncoding.EncodeToString(chunk.Data), // Base64编码音频
-		"is_final": chunk.IsLast,                                  // 标记是否为最后一块
+		"text":     encoded,      // Base64编码音频
+		"is_final": chunk.IsLast, // 标记是否为最后一块
 	}
 
-	if err := s.sendFunc(sessionID, "ai_audio", data); err != nil {
+	if err := s.sendFunc(sessionID, "audio", data); err != nil {
 		logger.WarnCF("pet-voice", "failed to send audio chunk", map[string]any{
 			"session_id": sessionID,
 			"chat_id":    chatID,
@@ -64,5 +68,5 @@ func (s *Sender) SendError(sessionID string, chatID int64, errMsg string) error 
 		"text":    errMsg,
 	}
 
-	return s.sendFunc(sessionID, "ai_audio", data)
+	return s.sendFunc(sessionID, "audio", data)
 }
