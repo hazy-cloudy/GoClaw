@@ -93,15 +93,11 @@ func (t *MinimaxTTS) Synthesize(text string, params VoiceParams) (<-chan AudioCh
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 
-	fmt.Printf("pet-voice: API response status=%d\n", resp.StatusCode)
-
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
 	}
-
-	fmt.Printf("pet-voice: starting readStream\n")
 
 	// 创建通道并在后台goroutine中读取流数据
 	ch := make(chan AudioChunk, 100)
@@ -119,19 +115,15 @@ func (t *MinimaxTTS) readStream(body io.Reader, ch chan<- AudioChunk) {
 	partial := ""             // 处理不完整的行
 	totalRead := 0
 
-	fmt.Printf("pet-voice: readStream started\n")
-
 	for {
 		n, err := reader.Read(buf)
 		totalRead += n
-		fmt.Printf("pet-voice: read %d bytes, total: %d, err=%v\n", n, totalRead, err)
 
 		if n > 0 {
 			partial += string(buf[:n])
 
 			// 按行分割，处理已收到的完整行
 			lines := strings.Split(partial, "\n")
-			fmt.Printf("pet-voice: split into %d lines, partial=%q\n", len(lines), partial)
 
 			// 保护：确保 lines 不为空
 			if len(lines) == 0 {
@@ -146,8 +138,6 @@ func (t *MinimaxTTS) readStream(body io.Reader, ch chan<- AudioChunk) {
 				if line == "" {
 					continue
 				}
-
-				fmt.Printf("pet-voice: line received: %q\n", line)
 
 				// SSE格式: "data: {...}"
 				if !strings.HasPrefix(line, "data:") {
@@ -183,19 +173,15 @@ func (t *MinimaxTTS) readStream(body io.Reader, ch chan<- AudioChunk) {
 		if err != nil {
 			if err != io.EOF {
 				logger.WarnCF("pet-voice", "stream read error", map[string]any{"error": err})
-			} else {
-				fmt.Printf("pet-voice: stream EOF\n")
 			}
 			// 处理剩余的 partial 数据
 			if partial != "" {
-				fmt.Printf("pet-voice: processing remaining partial: %q\n", partial)
 				line := strings.TrimSpace(partial)
 				if strings.HasPrefix(line, "data:") {
 					data := strings.TrimPrefix(line, "data:")
 					data = strings.TrimSpace(data)
 					chunk, parseErr := t.parseChunk(data)
 					if parseErr == nil {
-						fmt.Printf("pet-voice: parsed final chunk, size=%d\n", len(chunk.Data))
 						select {
 						case ch <- chunk:
 						default:

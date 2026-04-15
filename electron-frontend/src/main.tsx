@@ -7,8 +7,6 @@ import './index.css'
 const hash = window.location.hash
 const isSettings = hash === '#settings'
 
-console.log('[App] hash:', hash, 'isSettings:', isSettings)
-
 const root = ReactDOM.createRoot(document.getElementById('root')!)
 
 if (isSettings) {

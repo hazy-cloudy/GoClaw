@@ -31,6 +31,9 @@ type TabType = 'chat' | 'character' | 'llm' | 'display'
 function Settings() {
   const [activeTab, setActiveTab] = useState<TabType>('chat')
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([])
+  const chatRef = useRef('')
+  const emotionRef = useRef('neutral')
+  const audioRef = useRef('')
   const [inputText, setInputText] = useState('')
   const [streamingText, setStreamingText] = useState('')
   const currentAIMsgId = useRef<string | null>(null)
@@ -63,47 +66,33 @@ function Settings() {
   }, [isConnected, isConnecting])
 
   useEffect(() => {
-    let currentId: string | null = null
-    let accumulatedText = ''
-    let lastEmotion = 'neutral'
-    
     picoOn('ai_chat', (data) => {
-      if (data.isFinal) {
-        if (currentId) {
-          setChatHistory(prev => prev.map(msg => 
-            msg.id === currentId ? { ...msg, text: accumulatedText } : msg
-          ))
-        }
-        currentId = null
-        accumulatedText = ''
-      } else if (data.text) {
-        accumulatedText += data.text
-        if (data.emotion) lastEmotion = data.emotion
-        if (!currentId) {
-          currentId = `ai_${Date.now()}`
+      if (data.is_final) {
+        const finalText = chatRef.current
+        chatRef.current = ''
+        if (finalText) {
           setChatHistory(prev => [...prev, {
-            id: currentId!,
-            text: accumulatedText,
+            id: `ai_${Date.now()}`,
+            text: finalText,
             time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
             isUser: false
           }])
-        } else {
-          setChatHistory(prev => prev.map(msg => 
-            msg.id === currentId ? { ...msg, text: accumulatedText } : msg
-          ))
         }
+        return
+      }
+      if (data.text) {
+        if (data.emotion) emotionRef.current = data.emotion
+        chatRef.current += data.text
       }
     })
-
-    let audioBuffer = ''
     
     picoOn('audio', (data) => {
       if (data.text) {
-        audioBuffer += data.text
+        audioRef.current += data.text
       }
-      if (data.is_final && audioBuffer) {
-        window.electronAPI?.showBubble(null, lastEmotion, audioBuffer)
-        audioBuffer = ''
+      if (data.is_final && audioRef.current) {
+        window.electronAPI?.showBubble(null, emotionRef.current, audioRef.current)
+        audioRef.current = ''
       }
     })
     
@@ -252,9 +241,11 @@ function Settings() {
                 <div className="chat-empty">开始和桌宠聊天吧...</div>
               ) : (
                 chatHistory.map((msg) => (
-                  <div key={msg.id} className={`chat-msg ${msg.isUser ? 'user' : 'ai'}`}>
-                    <span className="chat-text">{msg.text}</span>
-                    <span className="chat-time">{msg.time}</span>
+                  <div key={msg.id} className={`chat-message ${msg.isUser ? 'user' : 'ai'}`}>
+                    <div className="message-bubble">
+                      <span className="message-text">{msg.text}</span>
+                    </div>
+                    <span className="message-time">{msg.time}</span>
                   </div>
                 ))
               )}

@@ -2,7 +2,6 @@ package voice
 
 import (
 	"encoding/base64"
-	"fmt"
 
 	"github.com/sipeed/picoclaw/pkg/logger"
 )
@@ -27,7 +26,6 @@ func (s *Sender) SendAudioChunk(sessionID string, chatID int64, chunk AudioChunk
 	}
 
 	encoded := base64.StdEncoding.EncodeToString(chunk.Data)
-	fmt.Printf("pet-voice: SendAudioChunk chunk.Data_len=%d encoded_len=%d isLast=%v\n", len(chunk.Data), len(encoded), chunk.IsLast)
 
 	data := map[string]any{
 		"chat_id":  chatID,

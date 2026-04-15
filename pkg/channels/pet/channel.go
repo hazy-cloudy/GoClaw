@@ -126,22 +126,13 @@ func NewPetChannel(cfg config.PetConfig, msgBus *bus.MessageBus, workspacePath s
 
 	// 初始化语音合成器
 	voiceLoader := pc.service.VoiceLoader()
-	fmt.Printf("pet: VoiceLoader() = %v\n", voiceLoader)
 	if voiceLoader != nil {
 		ttsProvider := voiceLoader.GetProvider()
-		fmt.Printf("pet: ttsProvider = %v\n", ttsProvider)
 		if ttsProvider != nil {
 			voiceSender := voice.NewSender(pc.sendVoicePush)
 			pc.voiceSynthesizer = voice.NewSynthesizer(ttsProvider, voiceSender)
-			fmt.Printf("pet: voice synthesizer INITIALIZED\n")
-		} else {
-			fmt.Printf("pet: ttsProvider is NIL\n")
 		}
-	} else {
-		fmt.Printf("pet: voiceLoader is NIL\n")
 	}
-
-	fmt.Printf("pet: created PetChannel with config: %v\n", cfg)
 
 	return pc, nil
 }
@@ -448,8 +439,6 @@ func (c *PetChannel) BeginStream(ctx context.Context, sessionID string) (channel
 
 // Update 发送增量内容到客户端，使用状态机解析标签
 func (s *petStreamer) Update(ctx context.Context, content string) error {
-	fmt.Printf("pet: Update called, content=%s, inTextTag=%v, voiceSynthesizer=%v\n",
-		content, s.inTextTag, s.voiceSynthesizer != nil)
 	if s == nil || s.channel == nil {
 		return nil
 	}
@@ -459,23 +448,14 @@ func (s *petStreamer) Update(ctx context.Context, content string) error {
 	s.textVoiceBuffer.WriteString(content)
 
 	sendVoice := func() {
-		// 如果配置了语音合成器且启用了语音，则触发TTS
-		fmt.Printf("pet: sendVoice START, voiceSynthesizer=%v\n", s.voiceSynthesizer != nil)
 		appConfig := s.channel.service.AppConfig()
-		fmt.Printf("pet: sendVoice appConfig=%v\n", appConfig)
-		if appConfig != nil {
-			fmt.Printf("pet: sendVoice VoiceEnabled=%v\n", appConfig.VoiceEnabled)
-		}
 		if s.voiceSynthesizer != nil && appConfig != nil && appConfig.VoiceEnabled {
 			emotion := ""
 			if char := s.channel.service.CharManager().GetCurrent(); char != nil {
 				emotion, _ = char.GetEmotionEngine().GetDominantEmotion()
 			}
-			// 触发语音合成（异步进行，不阻塞文本发送）
-			// 先解析 [text:xxx] 标签，提取纯文本
 			rawText := s.textVoiceBuffer.String()
 			parsedText := parsePureText(rawText)
-			fmt.Printf("pet: sendVoice triggering TTS, text_len=%d, text=%s, parsed=%s\n", len(rawText), rawText, parsedText)
 			go s.voiceSynthesizer.ParseAndSynthesize(s.sessionID, s.chatID, parsedText, emotion)
 		}
 		s.textVoiceBuffer.Reset()
@@ -491,13 +471,11 @@ func (s *petStreamer) Update(ctx context.Context, content string) error {
 	}
 
 	if len(s.buffer) > 0 {
-		fmt.Printf("pet: buffer check, buffer=%s, inTextTag=%v\n", s.buffer, s.inTextTag)
 		if s.inTextTag {
 			if strings.Contains(s.buffer, "]") {
 				s.inTextTag = false
 				i := strings.Index(s.buffer, "]")
 				s.buffer = s.buffer[:i]
-				fmt.Printf("pet: exiting text tag, calling sendVoice, buffer=%s\n", s.buffer)
 				sendVoice()
 			}
 			sendPending()
@@ -505,7 +483,6 @@ func (s *petStreamer) Update(ctx context.Context, content string) error {
 			s.inTextTag = true
 			i := strings.Index(s.buffer, "[text:")
 			s.buffer = s.buffer[i+6:]
-			fmt.Printf("pet: entering text tag\n")
 			sendPending()
 		}
 	}

@@ -67,9 +67,7 @@ func (l *Loader) Load() error {
 	// 创建TTS提供者（目前仅支持Minimax）
 	// 先尝试从环境变量解析，再从 security.yml 解析
 	apiKey := resolveEnvVar(modelCfg.APIKey)
-	logger.Infof("pet voice: after env resolve, apiKey=%s", apiKey)
 	apiKey = resolveSecurityRef(apiKey, modelCfg.Name)
-	logger.Infof("pet voice: after security resolve, apiKey=%s", apiKey)
 	if apiKey == "" || apiKey == "$security:minimax-tts" {
 		logger.Warnf("pet voice: API key not resolved, security ref may have failed")
 	}

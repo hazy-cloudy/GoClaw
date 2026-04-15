@@ -126,7 +126,7 @@ export function usePicoClaw(apiBaseUrl: string, callbacks?: PicoCallbacks) {
               return
             }
             
-            // 处理 ai_chat 推送 (支持流式 v2.0)
+// 处理 ai_chat 推送 (支持流式 v2.0)
             if (msg.push_type === 'ai_chat') {
               const rawData = msg.data
               let text = ''
@@ -138,19 +138,19 @@ export function usePicoClaw(apiBaseUrl: string, callbacks?: PicoCallbacks) {
               if (typeof rawData === 'string') {
                 try {
                   const parsed = JSON.parse(rawData)
-                  text = parsed.Text || parsed.text || parsed.content || rawData
-                  emotion = parsed.Emotion || parsed.emotion || 'neutral'
-                  action = parsed.Action || parsed.action || ''
+                  text = parsed.text || parsed.Text || parsed.content || rawData
+                  emotion = parsed.emotion || parsed.Emotion || 'neutral'
+                  action = parsed.action || parsed.Action || ''
                   chatId = parsed.chat_id || 0
                 } catch {
                   text = rawData
                 }
               } else if (rawData && typeof rawData === 'object') {
-                chatId = rawData.chat_id || rawData.ChatID || 0
-                const dataType = rawData.ContentType
+                chatId = rawData.chat_id || rawData.ChatID || rawData.chatId || 0
+                const dataType = rawData.type || rawData.ContentType
                 
                 if (dataType === 'text' || dataType === 'final') {
-                  text = rawData.Text || rawData.text || ''
+                  text = rawData.Text || rawData.text || rawData.content || ''
                   emotion = rawData.Emotion || rawData.emotion || 'neutral'
                   action = rawData.Action || rawData.action || ''
                   if (dataType === 'final') isFinal = true
@@ -161,19 +161,16 @@ export function usePicoClaw(apiBaseUrl: string, callbacks?: PicoCallbacks) {
                 }
               }
               
-              // 清理 text
               if (typeof text === 'string') {
                 text = text.replace(/\{[^}]*\}/g, '').trim()
                 if (text.startsWith('"') && text.endsWith('"')) {
                   text = text.slice(1, -1)
                 }
               }
-              
-              if (text) {
-                const handler = handlersRef.current['ai_chat']
-                if (handler) {
-                  handler({ text, emotion, action, isFinal, chat_id: chatId })
-                }
+               
+              const handler = handlersRef.current['ai_chat']
+              if (handler) {
+                handler({ text, emotion, action, isFinal, chat_id: chatId, is_final: isFinal })
               }
               return
             }
