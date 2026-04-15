@@ -11,7 +11,9 @@ import (
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/pet/action"
 	"github.com/sipeed/picoclaw/pkg/pet/characters"
+	"github.com/sipeed/picoclaw/pkg/pet/compression"
 	"github.com/sipeed/picoclaw/pkg/pet/emotion"
+	"github.com/sipeed/picoclaw/pkg/pet/memory"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/tools"
 )
@@ -26,18 +28,24 @@ import (
 // 功能：
 //  1. 注入角色信息(persona)到system prompt
 //  2. 注入情绪状态、MBTI、可用动作到system prompt
-//  3. 解析LLM输出中的特殊标签
-//  4. 更新情绪状态机
-//  5. 触发动作推送
-//  6. 更新MBTI性格配置
+//  3. 注入角色记忆到system prompt
+//  4. 解析LLM输出中的特殊标签
+//  5. 更新情绪状态机
+//  6. 触发动作推送
+//  7. 更新MBTI性格配置
+//  8. 保存角色记忆
+//  9. 记录对话用于后续压缩
 //
 // 使用方式：
 //
 //	将此Hook注册到AgentLoop的事件系统中
 type PetHook struct {
-	charManager   *characters.Manager   // 角色管理器
-	actionManager *action.ActionManager // 动作管理器
-	petService    *PetService           // Pet服务，用于推送
+	charManager       *characters.Manager            // 角色管理器
+	actionManager     *action.ActionManager          // 动作管理器
+	petService        *PetService                    // Pet服务，用于推送
+	memoryStore       *memory.Store                  // 记忆存储
+	conversationStore *compression.ConversationStore // 会话存储
+	lastUserMessage   string                         // 最后一条用户消息，用于记录对话
 }
 
 // NewPetHook 创建PetHook实例
@@ -45,11 +53,15 @@ type PetHook struct {
 //   - charManager: 角色管理器
 //   - actionManager: 动作管理器指针
 //   - petService: Pet服务指针，用于推送情绪和动作
-func NewPetHook(charManager *characters.Manager, actionManager *action.ActionManager, petService *PetService) *PetHook {
+//   - memoryStore: 记忆存储指针
+//   - conversationStore: 会话存储指针
+func NewPetHook(charManager *characters.Manager, actionManager *action.ActionManager, petService *PetService, memoryStore *memory.Store, conversationStore *compression.ConversationStore) *PetHook {
 	return &PetHook{
-		charManager:   charManager,
-		actionManager: actionManager,
-		petService:    petService,
+		charManager:       charManager,
+		actionManager:     actionManager,
+		petService:        petService,
+		memoryStore:       memoryStore,
+		conversationStore: conversationStore,
 	}
 }
 
@@ -63,6 +75,14 @@ func (h *PetHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (*ag
 	char := h.charManager.GetCurrent()
 	if char == nil {
 		return req, agent.HookDecision{Action: agent.HookActionContinue}, nil
+	}
+
+	// 提取最后一条用户消息用于记录对话
+	for i := len(req.Messages) - 1; i >= 0; i-- {
+		if req.Messages[i].Role == "user" {
+			h.lastUserMessage = req.Messages[i].Content
+			break
+		}
 	}
 
 	emotions := char.GetEmotionEngine().GetEmotions()
@@ -109,6 +129,21 @@ func (h *PetHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (*ag
 		actionNames = append(actionNames, a.Name)
 	}
 
+	// 记忆检索prompt - 按权重从高到低排序，只取前500条
+	memoryPrompt := ""
+	if h.memoryStore != nil {
+		memories, _ := h.memoryStore.ListByWeight(char.ID, 500)
+		if len(memories) > 0 {
+			var sb strings.Builder
+			sb.WriteString("\n【角色记忆】\n")
+			for _, m := range memories {
+				sb.WriteString(fmt.Sprintf("- [%s] [%s] weight=%d: %s\n",
+					m.CreatedAt.Format("2006-01-02 15:04"), m.MemoryType, m.Weight, m.Content))
+			}
+			memoryPrompt = sb.String()
+		}
+	}
+
 	// 角色信息prompt
 	personaPrompt := fmt.Sprintf(`【桌宠角色信息】
 姓名：%s
@@ -121,28 +156,34 @@ func (h *PetHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (*ag
 
 	// 情绪动作prompt
 	emotionPrompt := fmt.Sprintf(`【你必须按以下要求输出回复】
- 当前你的情绪状态：joy=%d, anger=%d, sadness=%d, disgust=%d, surprise=%d, fear=%d
- 你的mbti人格:%s
+  当前你的情绪状态：joy=%d, anger=%d, sadness=%d, disgust=%d, surprise=%d, fear=%d
+  你的mbti人格:%s
 
- 【重要】
- - 用户输入是什么就原样接收，不要用 [text:] 包裹
- - [text:] 是你用来回复用户的格式，不是用来包裹用户输入
+  【重要】
+  - 用户输入是什么就原样接收，不要用 [text:] 包裹
+  - [text:] 是你用来回复用户的格式，不是用来包裹用户输入
 
- 【你的输出格式】
- 1. 回复用户的内容用 [text:你的回复文字] 包裹
-    - 正确：[text:你好呀，今天天气真好]
-    - 错误：把用户输入包进 [text:]
+  【你的输出格式】
+  1. 回复用户的内容用 [text:你的回复文字] 包裹
+     - 正确：[text:你好呀，今天天气真好]
+     - 错误：把用户输入包进 [text:]
 
- 2. 情绪变化用 [emotion:情绪名:变化值]
-    - 情绪名：%s
-    - 示例：[emotion:joy:+5] 表示你感到开心增加了5
+  2. 情绪变化用 [emotion:情绪名:变化值]
+     - 情绪名：%s
+     - 示例：[emotion:joy:+5] 表示你感到开心增加了5
 
- 3. (必须选择可用动作之一或者不选择任何动作)动作用 [action:动作名]
-    - 可用动作：%s
-    - 示例：[action:wave]
+  3. (必须选择可用动作之一或者不选择任何动作)动作用 [action:动作名]
+     - 可用动作：%s
+     - 示例：[action:wave]
 
- 4. MBTI用 [mbti:维度:字母]
-    - 示例：[mbti:ie:i]
+  4. MBTI用 [mbti:维度:字母]
+     - 示例：[mbti:ie:i]
+
+  5. 记忆用 [memory_type:类型-weight:权重-memory_text:摘要]
+     - 类型：conversation（对话）/ preference（偏好）/ fact（事实）
+     - 权重：0-100，越高越重要（一般50，中间70，重要85+，特别95+）
+     - 示例：[memory_type:preference-weight:75-memory_text:用户喜欢被夸奖]
+     - 每次对话建议生成1条相关记忆
 
 【输出格式要求】
 你必须使用以下格式回复用户：
@@ -151,6 +192,7 @@ func (h *PetHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (*ag
 2. [emotion:情绪名:+|值] - 情绪变化
 3. [action:动作名] - 动作触发（可选，必须选择可用动作之一或者不选择任何动作）
 4. [mbti:维度:字母] - MBTI变化
+5. [memory_type:类型-weight:权重-memory_text:摘要] - 记忆（可选）
 
 【示例对话】
 用户说：你好呀
@@ -162,21 +204,22 @@ func (h *PetHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (*ag
 		strings.Join(emotionList, ", "),
 		strings.Join(actionNames, ", "))
 
-	// 先注入角色信息，再注入情绪动作
-	personaMsg := providers.Message{
-		Role:    "system",
-		Content: personaPrompt,
+	// 先注入记忆，再注入角色信息，最后注入情绪动作
+	var msgs []providers.Message
+	if memoryPrompt != "" {
+		memoryMsg := providers.Message{Role: "system", Content: memoryPrompt}
+		msgs = append(msgs, memoryMsg)
 	}
-	emotionMsg := providers.Message{
-		Role:    "system",
-		Content: emotionPrompt,
-	}
+	personaMsg := providers.Message{Role: "system", Content: personaPrompt}
+	emotionMsg := providers.Message{Role: "system", Content: emotionPrompt}
+	msgs = append(msgs, personaMsg, emotionMsg)
 
-	req.Messages = append([]providers.Message{personaMsg, emotionMsg}, req.Messages...)
+	req.Messages = append(msgs, req.Messages...)
 
 	logger.InfoCF("pet", "PetHook.BeforeLLM: 已注入角色信息、情绪动作上下文", map[string]any{
 		"character":      char.Name,
 		"persona_length": len(personaPrompt),
+		"memory_length":  len(memoryPrompt),
 		"emotions": fmt.Sprintf("joy=%d, anger=%d, sadness=%d, disgust=%d, surprise=%d, fear=%d",
 			emotions.Joy, emotions.Anger, emotions.Sadness, emotions.Disgust, emotions.Surprise, emotions.Fear),
 		"actions":        actionNames,
@@ -254,7 +297,19 @@ func (h *PetHook) AfterLLM(ctx context.Context, resp *agent.LLMHookResponse) (*a
 		}
 	}
 
-	// 4. 检查情绪阈值，决定是否推送
+	// 4. 解析记忆标签并保存
+	memoryTags := parseMemoryTags(content)
+	if len(memoryTags) > 0 && h.memoryStore != nil {
+		char := h.charManager.GetCurrent()
+		if char != nil {
+			for _, tag := range memoryTags {
+				h.memoryStore.Add(char.ID, tag.Summary, tag.Type, tag.Weight)
+				logger.Infof("pet: saved memory type=%s, weight=%d, summary=%s", tag.Type, tag.Weight, tag.Summary)
+			}
+		}
+	}
+
+	// 5. 检查情绪阈值，决定是否推送
 	if shouldPush, push := h.charManager.GetCurrent().GetEmotionEngine().ShouldPush(); shouldPush {
 		logger.InfoCF("pet", "PetHook: 情绪阈值触发推送", map[string]any{
 			"emotion": push.Emotion,
@@ -286,6 +341,24 @@ func (h *PetHook) AfterLLM(ctx context.Context, resp *agent.LLMHookResponse) (*a
 		}
 	}
 	resp.Response.Content = finalText
+
+	// 6. 记录对话到会话存储（用于后续压缩）
+	if h.conversationStore != nil {
+		char := h.charManager.GetCurrent()
+		if char != nil {
+			if h.lastUserMessage != "" {
+				if err := h.conversationStore.Add(char.ID, "user", h.lastUserMessage); err != nil {
+					logger.Warnf("pet: failed to add user message to conversation store: %v", err)
+				}
+			}
+			if finalText != "" {
+				if err := h.conversationStore.Add(char.ID, "pet", finalText); err != nil {
+					logger.Warnf("pet: failed to add pet message to conversation store: %v", err)
+				}
+			}
+			h.lastUserMessage = ""
+		}
+	}
 
 	return resp, agent.HookDecision{Action: agent.HookActionContinue}, nil
 }
@@ -748,4 +821,38 @@ func extractTextFromTags(content string) string {
 		sb.WriteString(tag.Text)
 	}
 	return sb.String()
+}
+
+// MemoryTag 记忆标签
+type MemoryTag struct {
+	Type    string // 记忆类型：conversation/preference/fact
+	Weight  int    // 权重：0-100
+	Summary string // 记忆内容摘要
+}
+
+// parseMemoryTags 从文本中解析所有记忆标签
+// 格式: [memory_type:类型-weight:权重-memory_text:摘要]
+// 示例: [memory_type:conversation-weight:75-memory_text:用户喜欢聊天气]
+//
+//	[memory_type:preference-weight:80-memory_text:喜欢被夸奖]
+//	[memory_type:fact-weight:60-memory_text:今天下雨了]
+//
+// 正则捕获组说明：
+//
+//	m[0]: 完整匹配字符串
+//	m[1]: 记忆类型 (conversation/preference/fact)
+//	m[2]: 权重数字 (0-100)
+//	m[3]: 记忆内容摘要
+//
+// 如果权重解析失败，默认使用50（一般重要性）
+func parseMemoryTags(content string) []MemoryTag {
+	var tags []MemoryTag
+	regex := regexp.MustCompile(`\[memory_type:(\w+)-weight:(\d+)-memory_text:([^\]]+)\]`)
+	matches := regex.FindAllStringSubmatch(content, -1)
+	for _, m := range matches {
+		weight := 50 // 默认权重
+		fmt.Sscanf(m[2], "%d", &weight)
+		tags = append(tags, MemoryTag{Type: m[1], Weight: weight, Summary: m[3]})
+	}
+	return tags
 }
