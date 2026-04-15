@@ -4,8 +4,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-
-	"github.com/sipeed/picoclaw/pkg/logger"
 )
 
 // Synthesizer 语音合成器
@@ -59,19 +57,8 @@ func (s *Synthesizer) ParseAndSynthesize(sessionID string, chatID int64, content
 			params.Vol = 1.0
 		}
 
-		logger.DebugCF("pet-voice", "synthesizing", map[string]any{
-			"session_id": sessionID,
-			"chat_id":    chatID,
-			"text":       parsed.Text,
-			"params":     params,
-		})
-
 		ch, err := s.provider.Synthesize(parsed.Text, params)
 		if err != nil {
-			logger.WarnCF("pet-voice", "synthesize failed", map[string]any{
-				"session_id": sessionID,
-				"error":      err,
-			})
 			s.sender.SendError(sessionID, chatID, err.Error())
 			continue
 		}
@@ -79,7 +66,6 @@ func (s *Synthesizer) ParseAndSynthesize(sessionID string, chatID int64, content
 		// 从通道读取音频块并发送
 		for chunk := range ch {
 			if err := s.sender.SendAudioChunk(sessionID, chatID, chunk); err != nil {
-				logger.WarnCF("pet-voice", "send audio chunk failed", map[string]any{"error": err})
 				break
 			}
 		}
@@ -91,12 +77,25 @@ func (s *Synthesizer) ParseAndSynthesize(sessionID string, chatID int64, content
 // parseTextTags 解析文本中的标签
 // 支持格式: [text:xxx](-[voice:yyy])?
 // voice部分是可选的
+// 如果没有匹配到任何标签，则返回整个内容作为纯文本
 func (s *Synthesizer) parseTextTags(content string) []ParsedText {
 	var results []ParsedText
 
 	// 组合正则: [text:内容](-[voice:参数])?
 	combinedRegex := regexp.MustCompile(`\[text:([^\]]+)\](?:-\[voice:([^\]]+)\])?`)
 	matches := combinedRegex.FindAllStringSubmatch(content, -1)
+
+	// 如果没有匹配到任何 [text:] 标签，将整个内容作为纯文本返回
+	if len(matches) == 0 {
+		cleaned := CleanTextTags(content)
+		if cleaned != "" {
+			results = append(results, ParsedText{
+				Text:   cleaned,
+				Params: DefaultVoiceParams(),
+			})
+		}
+		return results
+	}
 
 	for _, match := range matches {
 		if len(match) < 2 {

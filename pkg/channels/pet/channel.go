@@ -20,6 +20,23 @@ import (
 	"github.com/sipeed/picoclaw/pkg/pet/voice"
 )
 
+// parsePureText 从 [text:xxx] 格式中提取纯文本
+func parsePureText(raw string) string {
+	// 匹配 [text:xxx] 格式，提取 xxx 部分
+	re := regexp.MustCompile(`\[text:([^\]]*)\]`)
+	matches := re.FindAllStringSubmatch(raw, -1)
+	if len(matches) == 0 {
+		return raw
+	}
+	var sb strings.Builder
+	for _, match := range matches {
+		if len(match) > 1 {
+			sb.WriteString(match[1])
+		}
+	}
+	return sb.String()
+}
+
 // Request 定义了客户端请求的类型
 type Request = pet.Request
 
@@ -108,15 +125,14 @@ func NewPetChannel(cfg config.PetConfig, msgBus *bus.MessageBus, workspacePath s
 	pc.service.Start()
 
 	// 初始化语音合成器
-	if voiceLoader := pc.service.VoiceLoader(); voiceLoader != nil {
-		if ttsProvider := voiceLoader.GetProvider(); ttsProvider != nil {
+	voiceLoader := pc.service.VoiceLoader()
+	if voiceLoader != nil {
+		ttsProvider := voiceLoader.GetProvider()
+		if ttsProvider != nil {
 			voiceSender := voice.NewSender(pc.sendVoicePush)
 			pc.voiceSynthesizer = voice.NewSynthesizer(ttsProvider, voiceSender)
-			logger.Infof("pet: voice synthesizer initialized")
 		}
 	}
-
-	logger.Infof("pet: created PetChannel with config: %v", cfg)
 
 	return pc, nil
 }
@@ -145,8 +161,10 @@ func (c *PetChannel) Service() *pet.PetService {
 
 // Start 启动通道
 func (c *PetChannel) Start(ctx context.Context) error {
+	addr := fmt.Sprintf("%s:%d", c.config.Host, c.config.Port)
+	logger.Infof("pet: Start called, addr=%s, host=%s, port=%d", addr, c.config.Host, c.config.Port)
+
 	go func() {
-		addr := fmt.Sprintf("%s:%d", c.config.Host, c.config.Port)
 		httpServer := &http.Server{
 			Addr:         addr,
 			Handler:      c,
@@ -263,6 +281,7 @@ func (c *PetChannel) broadcastPush(push pet.Push) {
 
 // ServeHTTP 处理HTTP请求（WebSocket升级）
 func (c *PetChannel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	logger.Infof("pet: ServeHTTP called, path=%s, method=%s", r.URL.Path, r.Method)
 	if r.URL.Path == "/ws" || r.URL.Path == "/" {
 		c.handleWebSocket(w, r)
 		return
@@ -354,6 +373,7 @@ func (c *PetChannel) readLoop(pc *petConn) {
 
 // handleRequest 处理客户端请求
 func (c *PetChannel) handleRequest(pc *petConn, req Request) {
+	logger.Infof("pet: handleRequest called, action=%s, conn_id=%s", req.Action, pc.id)
 	c.service.HandleRequest(pc.id, req)
 }
 
@@ -408,6 +428,7 @@ type petStreamer struct {
 
 // BeginStream 实现StreamingCapable接口
 func (c *PetChannel) BeginStream(ctx context.Context, sessionID string) (channels.Streamer, error) {
+	logger.Infof("pet: BeginStream called, sessionID=%s", sessionID)
 	return &petStreamer{
 		channel:          c,
 		sessionID:        sessionID,
@@ -418,12 +439,6 @@ func (c *PetChannel) BeginStream(ctx context.Context, sessionID string) (channel
 
 // Update 发送增量内容到客户端，使用状态机解析标签
 func (s *petStreamer) Update(ctx context.Context, content string) error {
-	//logger.DebugCF("pet", "Update called", map[string]any{
-	//	"content":    content,
-	//	"inTextTag":  s.inTextTag,
-	//	"inOtherTag": s.inOtherTag,
-	//	"buffer":     s.buffer,
-	//})
 	if s == nil || s.channel == nil {
 		return nil
 	}
@@ -433,15 +448,15 @@ func (s *petStreamer) Update(ctx context.Context, content string) error {
 	s.textVoiceBuffer.WriteString(content)
 
 	sendVoice := func() {
-		// 如果配置了语音合成器且启用了语音，则触发TTS
-		if s.voiceSynthesizer != nil && s.channel.service.AppConfig().VoiceEnabled {
+		appConfig := s.channel.service.AppConfig()
+		if s.voiceSynthesizer != nil && appConfig != nil && appConfig.VoiceEnabled {
 			emotion := ""
 			if char := s.channel.service.CharManager().GetCurrent(); char != nil {
 				emotion, _ = char.GetEmotionEngine().GetDominantEmotion()
 			}
-			// 触发语音合成（异步进行，不阻塞文本发送）
-			textToSend := s.textVoiceBuffer.String()
-			go s.voiceSynthesizer.ParseAndSynthesize(s.sessionID, s.chatID, textToSend, emotion)
+			rawText := s.textVoiceBuffer.String()
+			parsedText := parsePureText(rawText)
+			go s.voiceSynthesizer.ParseAndSynthesize(s.sessionID, s.chatID, parsedText, emotion)
 		}
 		s.textVoiceBuffer.Reset()
 	}

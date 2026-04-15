@@ -430,6 +430,10 @@ func (m *Manager) initChannels(channels *config.ChannelsConfig) error {
 		m.initChannel("vk", "VK")
 	}
 
+	if channels.Pet.Enabled {
+		m.initChannel("pet", "Pet")
+	}
+
 	logger.InfoCF("channels", "Channel initialization completed", map[string]any{
 		"enabled_channels": len(m.channels),
 	})

@@ -113,9 +113,11 @@ func (t *MinimaxTTS) readStream(body io.Reader, ch chan<- AudioChunk) {
 	reader := io.Reader(body)
 	buf := make([]byte, 4096) // 4KB缓冲区
 	partial := ""             // 处理不完整的行
+	totalRead := 0
 
 	for {
 		n, err := reader.Read(buf)
+		totalRead += n
 
 		if n > 0 {
 			partial += string(buf[:n])
@@ -171,8 +173,21 @@ func (t *MinimaxTTS) readStream(body io.Reader, ch chan<- AudioChunk) {
 		if err != nil {
 			if err != io.EOF {
 				logger.WarnCF("pet-voice", "stream read error", map[string]any{"error": err})
-			} else {
-				logger.DebugCF("pet-voice", "stream EOF", nil)
+			}
+			// 处理剩余的 partial 数据
+			if partial != "" {
+				line := strings.TrimSpace(partial)
+				if strings.HasPrefix(line, "data:") {
+					data := strings.TrimPrefix(line, "data:")
+					data = strings.TrimSpace(data)
+					chunk, parseErr := t.parseChunk(data)
+					if parseErr == nil {
+						select {
+						case ch <- chunk:
+						default:
+						}
+					}
+				}
 			}
 			break
 		}
