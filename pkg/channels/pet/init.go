@@ -25,6 +25,6 @@ func init() {
 		}
 
 		// 创建并返回 pet channel 实例
-		return NewPetChannel(cfg.Channels.Pet, b, workspacePath)
+		return NewPetChannel(cfg.Channels.Pet, b, workspacePath, cfg)
 	})
 }

@@ -79,7 +79,8 @@ type petConn struct {
 // cfg: pet channel 配置
 // msgBus: 消息总线
 // workspacePath: 工作区路径，用于存储角色配置等文件
-func NewPetChannel(cfg config.PetConfig, msgBus *bus.MessageBus, workspacePath string) (*PetChannel, error) {
+// systemConfig: 系统配置，用于创建压缩所需的 LLM Provider
+func NewPetChannel(cfg config.PetConfig, msgBus *bus.MessageBus, workspacePath string, systemConfig *config.Config) (*PetChannel, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	base := channels.NewBaseChannel("pet", cfg, msgBus, cfg.AllowFrom)
@@ -116,6 +117,7 @@ func NewPetChannel(cfg config.PetConfig, msgBus *bus.MessageBus, workspacePath s
 	var err error
 	pc.service, err = pet.NewPetService(msgBus, pet.PetServiceConfig{
 		WorkspacePath: workspacePath,
+		Config:        systemConfig,
 	})
 	if err != nil {
 		logger.Errorf("pet: failed to create PetService: %v", err)
@@ -192,6 +194,11 @@ func (c *PetChannel) Stop(ctx context.Context) error {
 	}
 	c.connections = make(map[string]*petConn)
 	c.connsMu.Unlock()
+
+	if c.service != nil {
+		c.service.Stop()
+	}
+
 	logger.InfoCF("pet", "Pet channel stopped", nil)
 	return nil
 }

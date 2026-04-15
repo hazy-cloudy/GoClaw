@@ -188,15 +188,15 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 		return err
 	}
 
-	// 注册 Pet Character Hook 到 AgentLoop
-	// 这样角色人格信息会在每次 LLM 调用前注入到 system prompt
+	// 注册 Pet Hook 到 AgentLoop
+	// 用于注入角色信息、解析情绪/动作/MBTI标签、保存记忆
 	// 对所有 channel 生效（不仅是 pet channel）
 	if cfg.Channels.Pet.Enabled {
 		if petChannel, ok := runningServices.ChannelManager.GetChannel("pet"); ok {
 			if pc, ok := petChannel.(*petchannel.PetChannel); ok {
 				svc := pc.Service()
 
-				petHook := pet.NewPetHook(svc.CharManager(), svc.ActionManager(), svc)
+				petHook := pet.NewPetHook(svc.CharManager(), svc.ActionManager(), svc, svc.MemoryStore(), svc.ConversationStore())
 				agentLoop.MountHook(agent.NamedHook("pet", petHook))
 				logger.InfoCF("pet", "Pet hook registered", nil)
 			}
