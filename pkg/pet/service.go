@@ -4,16 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/sipeed/picoclaw/pkg/logger"
 	"sync"
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/bus"
+	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/pet/action"
 	"github.com/sipeed/picoclaw/pkg/pet/characters"
-	"github.com/sipeed/picoclaw/pkg/pet/config"
+	"github.com/sipeed/picoclaw/pkg/pet/compression"
+	petconfig "github.com/sipeed/picoclaw/pkg/pet/config"
 	"github.com/sipeed/picoclaw/pkg/pet/memory"
 	"github.com/sipeed/picoclaw/pkg/pet/voice"
+	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
 type PushHandler func(push any)
@@ -22,12 +25,15 @@ type PetService struct {
 	msgBus      *bus.MessageBus
 	config      PetServiceConfig
 	pushHandler PushHandler
+	provider    providers.LLMProvider
 
-	configManager *config.Manager
-	charManager   *characters.Manager
-	actionManager *action.ActionManager
-	memoryStore   *memory.Store
-	voiceLoader   *voice.Loader
+	configManager     *petconfig.Manager
+	charManager       *characters.Manager
+	actionManager     *action.ActionManager
+	memoryStore       *memory.Store
+	voiceLoader       *voice.Loader
+	conversationStore *compression.ConversationStore
+	compressionSvc    *compression.CompressionService
 
 	connSessions map[string]string
 
@@ -40,6 +46,7 @@ type PetService struct {
 
 type PetServiceConfig struct {
 	WorkspacePath string
+	Config        *config.Config
 }
 
 func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, error) {
@@ -55,7 +62,7 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 	workspacePath := cfg.WorkspacePath
 	if workspacePath != "" {
 		logger.Debugf("pet: workspacePath=%s", workspacePath)
-		s.configManager = config.NewManager(workspacePath)
+		s.configManager = petconfig.NewManager(workspacePath)
 		if s.configManager == nil {
 			return nil, fmt.Errorf("failed to create config manager")
 		}
@@ -85,6 +92,60 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 		if err := s.actionManager.Load(); err != nil {
 			fmt.Printf("pet: failed to load actions: %v\n", err)
 		}
+
+		if s.memoryStore != nil {
+			// 获取压缩配置
+			compressionConfig := s.configManager.GetCompression()
+			threshold := compression.DefaultThreshold
+			if compressionConfig != nil && compressionConfig.Threshold > 0 {
+				threshold = compressionConfig.Threshold
+			}
+
+			// 对话存储的回调函数：当对话数达到阈值时触发压缩
+			callback := func(characterID string, entries []*compression.ConversationEntry) {
+				if s.compressionSvc != nil {
+					if err := s.compressionSvc.Compress(characterID, entries); err != nil {
+						logger.Warnf("compression: failed to compress: %v", err)
+					}
+				}
+			}
+
+			// 创建对话存储（使用 SQLite 持久化）
+			s.conversationStore, err = compression.NewConversationStore(cfg.WorkspacePath, threshold, callback)
+			if err != nil {
+				logger.Warnf("pet: failed to create conversation store: %v", err)
+			}
+
+			// 如果压缩功能启用，创建压缩服务
+			if cfg.Config != nil && compressionConfig != nil && compressionConfig.Enabled {
+				modelName := compressionConfig.Model
+				var provider providers.LLMProvider
+				var modelCfg *config.ModelConfig
+
+				// 获取模型配置（从 picoclaw 的 model_list 中查找）
+				if modelName != "" {
+					modelCfg, err = cfg.Config.GetModelConfig(modelName)
+					if err != nil {
+						logger.Warnf("pet: compression model %q not found: %v, compression disabled", modelName, err)
+					}
+				}
+
+				// 创建 LLM Provider（使用 modelCfg 中的配置）
+				if modelCfg != nil {
+					provider, _, err = providers.CreateProviderFromConfig(modelCfg)
+					if err != nil {
+						logger.Warnf("pet: failed to create compression provider: %v, compression disabled", err)
+					}
+				}
+
+				// 创建压缩服务并设置 Provider
+				if provider != nil {
+					s.provider = provider
+					s.compressionSvc = compression.NewCompressionService(compressionConfig, s.memoryStore, s.conversationStore)
+					s.compressionSvc.SetProvider(provider, modelCfg)
+				}
+			}
+		}
 	}
 
 	return s, nil
@@ -93,6 +154,9 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 func (s *PetService) Start() {
 	s.decayTicker = time.NewTicker(5 * time.Second)
 	go s.runEmotionDecay()
+	if s.compressionSvc != nil {
+		s.compressionSvc.Start()
+	}
 	fmt.Println("pet: PetService started, emotion decay ticker running")
 }
 
@@ -120,6 +184,9 @@ func (s *PetService) Stop() {
 	if s.decayTicker != nil {
 		s.decayTicker.Stop()
 	}
+	if s.compressionSvc != nil {
+		s.compressionSvc.Stop()
+	}
 	if s.memoryStore != nil {
 		s.memoryStore.Close()
 	}
@@ -128,19 +195,21 @@ func (s *PetService) Stop() {
 }
 
 func (s *PetService) Shutdown() {
+	fmt.Println("pet: Shutdown called")
 	if s.charManager != nil {
 		if err := s.charManager.SavePrivateConfig(); err != nil {
 			fmt.Printf("pet: failed to save private config: %v\n", err)
 		}
 	}
 	if s.configManager != nil {
+		fmt.Println("pet: calling configManager.Save()")
 		if err := s.configManager.Save(); err != nil {
 			fmt.Printf("pet: failed to save config: %v\n", err)
 		}
 	}
 }
 
-func (s *PetService) ConfigManager() *config.Manager {
+func (s *PetService) ConfigManager() *petconfig.Manager {
 	return s.configManager
 }
 
@@ -154,6 +223,10 @@ func (s *PetService) ActionManager() *action.ActionManager {
 
 func (s *PetService) MemoryStore() *memory.Store {
 	return s.memoryStore
+}
+
+func (s *PetService) ConversationStore() *compression.ConversationStore {
+	return s.conversationStore
 }
 
 func (s *PetService) VoiceLoader() *voice.Loader {
@@ -317,6 +390,10 @@ func (s *PetService) HandleRequest(connID string, req Request) error {
 		return s.handleEmotionGet(sessionID, req)
 	case ActionHealthCheck:
 		return s.handleHealthCheck(sessionID, req)
+	case ActionMemorySearch:
+		return s.handleMemorySearch(sessionID, req)
+	case ActionConversationList:
+		return s.handleConversationList(sessionID, req)
 	default:
 		return s.sendError(sessionID, req.Action, fmt.Sprintf("unknown action: %s", req.Action))
 	}
@@ -539,8 +616,210 @@ func (s *PetService) sendPush(sessionID, pushType string, data interface{}) erro
 	return nil
 }
 
-func (s *PetService) AppConfig() *config.AppConfig {
+func (s *PetService) AppConfig() *petconfig.AppConfig {
 	return s.configManager.GetApp()
+}
+
+// handleMemorySearch 处理记忆搜索请求
+// 支持按关键词、类型、最低权重过滤，按权重排序
+func (s *PetService) handleMemorySearch(sessionID string, req Request) error {
+	var searchReq MemorySearchRequest
+	if err := json.Unmarshal(req.Data, &searchReq); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid memory search data")
+	}
+
+	if searchReq.CharacterID == "" {
+		return s.sendError(sessionID, req.Action, "character_id is required")
+	}
+
+	// 获取所有记忆
+	allMemories, err := s.memoryStore.List(searchReq.CharacterID)
+	if err != nil {
+		return s.sendError(sessionID, req.Action, fmt.Sprintf("failed to list memories: %v", err))
+	}
+
+	// 过滤记忆
+	var filtered []*memory.Memory
+	for _, m := range allMemories {
+		// 关键词过滤（不区分大小写）
+		if searchReq.Keyword != "" {
+			if !containsIgnoreCase(m.Content, searchReq.Keyword) {
+				continue
+			}
+		}
+		// 类型过滤
+		if searchReq.Type != "" && m.MemoryType != searchReq.Type {
+			continue
+		}
+		// 最低权重过滤
+		if searchReq.MinWeight > 0 && m.Weight < searchReq.MinWeight {
+			continue
+		}
+		filtered = append(filtered, m)
+	}
+
+	// 排序：按权重从高到低
+	sortMemoriesByWeight(filtered)
+
+	// 统计总数
+	total := len(filtered)
+
+	// 分页
+	limit := searchReq.Limit
+	if limit <= 0 {
+		limit = 20 // 默认20条
+	}
+	offset := searchReq.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	if offset >= total {
+		filtered = []*memory.Memory{}
+	} else {
+		filtered = filtered[offset:end]
+	}
+
+	// 转换为响应格式
+	memoryItems := make([]MemoryItem, 0, len(filtered))
+	for _, m := range filtered {
+		memoryItems = append(memoryItems, MemoryItem{
+			ID:        m.ID,
+			Type:      m.MemoryType,
+			Weight:    m.Weight,
+			Content:   m.Content,
+			CreatedAt: m.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		})
+	}
+
+	hasMore := offset+limit < total
+
+	return s.sendResponse(sessionID, req.Action, MemorySearchResponse{
+		Memories: memoryItems,
+		Total:    total,
+		HasMore:  hasMore,
+	})
+}
+
+// handleConversationList 处理对话列表请求
+// 获取指定角色的对话历史，按时间倒序
+func (s *PetService) handleConversationList(sessionID string, req Request) error {
+	var listReq ConversationListRequest
+	if err := json.Unmarshal(req.Data, &listReq); err != nil {
+		return s.sendError(sessionID, req.Action, "invalid conversation list data")
+	}
+
+	if listReq.CharacterID == "" {
+		return s.sendError(sessionID, req.Action, "character_id is required")
+	}
+
+	// 获取所有对话
+	limit := listReq.Limit
+	if limit <= 0 {
+		limit = 50 // 默认50条
+	}
+	offset := listReq.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	// 获取所有对话用于统计总数
+	allConversations, err := s.conversationStore.GetAll(listReq.CharacterID, 10000)
+	if err != nil {
+		return s.sendError(sessionID, req.Action, fmt.Sprintf("failed to get conversations: %v", err))
+	}
+	total := len(allConversations)
+
+	// 分页获取
+	pageConversations, err := s.conversationStore.GetAll(listReq.CharacterID, limit+offset)
+	if err != nil {
+		return s.sendError(sessionID, req.Action, fmt.Sprintf("failed to get conversations: %v", err))
+	}
+
+	// 跳过 offset 条
+	if offset >= len(pageConversations) {
+		pageConversations = []*compression.ConversationEntry{}
+	} else {
+		pageConversations = pageConversations[offset:]
+		if len(pageConversations) > limit {
+			pageConversations = pageConversations[:limit]
+		}
+	}
+
+	// 转换为响应格式
+	conversationItems := make([]ConversationItem, 0, len(pageConversations))
+	for _, c := range pageConversations {
+		conversationItems = append(conversationItems, ConversationItem{
+			ID:         c.ID,
+			Role:       c.Role,
+			Content:    c.Content,
+			Timestamp:  c.Timestamp.Format("2006-01-02T15:04:05Z"),
+			Compressed: false, // GetAll 不返回压缩状态，需要单独查询
+		})
+	}
+
+	hasMore := offset+limit < total
+
+	return s.sendResponse(sessionID, req.Action, ConversationListResponse{
+		Conversations: conversationItems,
+		Total:         total,
+		HasMore:       hasMore,
+	})
+}
+
+// sortMemoriesByWeight 按权重从高到低排序
+func sortMemoriesByWeight(memories []*memory.Memory) {
+	for i := 0; i < len(memories); i++ {
+		for j := i + 1; j < len(memories); j++ {
+			if memories[j].Weight > memories[i].Weight {
+				memories[i], memories[j] = memories[j], memories[i]
+			}
+		}
+	}
+}
+
+// containsIgnoreCase 字符串包含检查（不区分大小写）
+func containsIgnoreCase(s, substr string) bool {
+	if len(substr) == 0 {
+		return true
+	}
+	if len(s) < len(substr) {
+		return false
+	}
+	// 转小写比较
+	sLower := make([]byte, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		sLower[i] = c
+	}
+	substrLower := make([]byte, len(substr))
+	for i := 0; i < len(substr); i++ {
+		c := substr[i]
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		substrLower[i] = c
+	}
+	for i := 0; i <= len(sLower)-len(substrLower); i++ {
+		match := true
+		for j := 0; j < len(substrLower); j++ {
+			if sLower[i+j] != substrLower[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
 }
 
 func mustMarshal(v interface{}) json.RawMessage {
