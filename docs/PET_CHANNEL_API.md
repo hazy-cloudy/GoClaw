@@ -1,7 +1,7 @@
 # Pet Channel API 接口文档
 
-> 版本：v2.1  
-> 日期：2026-04-14  
+> 版本：v2.2  
+> 日期：2026-04-15  
 > 协议：WebSocket + JSON
 
 ---
@@ -714,6 +714,143 @@ audio.play();
 
 ---
 
+### 4.10 memory_search - 搜索记忆
+
+搜索桌宠的记忆列表，支持按关键词、类型、权重过滤。
+
+**请求**：
+
+```json
+{
+  "action": "memory_search",
+  "data": {
+    "character_id": "pet_001",
+    "keyword": "喜欢",
+    "type": "preference",
+    "min_weight": 60,
+    "limit": 20,
+    "offset": 0
+  }
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "memory_search",
+  "data": {
+    "memories": [
+      {
+        "id": 1,
+        "type": "preference",
+        "weight": 75,
+        "content": "用户喜欢听古典音乐",
+        "created_at": "2024-01-15T10:30:00Z"
+      }
+    ],
+    "total": 15,
+    "has_more": true
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| character_id | string | 是 | 角色ID |
+| keyword | string | 否 | 关键词搜索（不区分大小写） |
+| type | string | 否 | 记忆类型：`conversation`(对话) / `preference`(偏好) / `fact`(事实) |
+| min_weight | int | 否 | 最低权重过滤（0-100） |
+| limit | int | 否 | 返回条数限制，默认 20 |
+| offset | int | 否 | 翻页偏移，默认 0 |
+
+**响应字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| memories | array | 记忆列表，按权重从高到低排序 |
+| memories[].id | int | 记忆ID |
+| memories[].type | string | 记忆类型 |
+| memories[].weight | int | 权重 0-100 |
+| memories[].content | string | 记忆内容摘要 |
+| memories[].created_at | string | 创建时间（ISO 8601） |
+| total | int | 符合条件的总数量 |
+| has_more | bool | 是否有更多数据 |
+
+---
+
+### 4.11 conversation_list - 对话历史
+
+获取指定角色的对话历史记录。
+
+**请求**：
+
+```json
+{
+  "action": "conversation_list",
+  "data": {
+    "character_id": "pet_001",
+    "limit": 50,
+    "offset": 0
+  }
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "conversation_list",
+  "data": {
+    "conversations": [
+      {
+        "id": 1,
+        "role": "user",
+        "content": "你好呀",
+        "timestamp": "2024-01-15T10:30:00Z",
+        "compressed": false
+      },
+      {
+        "id": 2,
+        "role": "pet",
+        "content": "你好！今天心情怎么样？",
+        "timestamp": "2024-01-15T10:30:05Z",
+        "compressed": false
+      }
+    ],
+    "total": 100,
+    "has_more": true
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| character_id | string | 是 | 角色ID |
+| limit | int | 否 | 返回条数限制，默认 50 |
+| offset | int | 否 | 翻页偏移，默认 0 |
+
+**响应字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| conversations | array | 对话列表，按时间倒序（新的在前） |
+| conversations[].id | int | 对话ID |
+| conversations[].role | string | 角色：`user`(用户) / `pet`(宠物) |
+| conversations[].content | string | 对话内容 |
+| conversations[].timestamp | string | 对话时间（ISO 8601） |
+| conversations[].compressed | bool | 是否已压缩（已压缩的对话会被合并为记忆） |
+| total | int | 对话总数量（含已压缩） |
+| has_more | bool | 是否有更多数据 |
+
+---
+
 ## 五、错误码
 
 ### 5.1 WebSocket 错误 (status: error)
@@ -890,6 +1027,8 @@ async def send_chat(ws, text):
 | config_update | 更新应用配置 | 修改应用设置 |
 | emotion_get | 获取情绪状态 | 查看当前情绪 |
 | health_check | 健康检查 | 检测连接状态 |
+| memory_search | 搜索记忆 | 搜索记忆列表（支持关键词、类型、权重过滤） |
+| conversation_list | 对话历史 | 获取对话历史记录 |
 
 ### 7.2 push_type 快速索引
 
