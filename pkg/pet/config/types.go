@@ -1,18 +1,22 @@
 package config
 
+import "github.com/sipeed/picoclaw/pkg/pet/compression"
+
 const (
 	PetConfigFile       = "pet_config.json" // 统一配置文件名
-	CharacterConfigFile = "config.json"     // 角色私有配置文件名
+	CharacterConfigFile = "config.json"     // 角色私有配置文件文件名
 	WorkspacePath       = "workspaces"      // 私有配置目录路径
 )
 
 // PetConfig Pet统一配置结构
 // 包含所有pet相关配置，统一加载和保存
 type PetConfig struct {
-	Characters []*CharacterConfig `json:"characters"` // 角色列表
-	ActiveID   string             `json:"active_id"`  // 当前激活的角色ID
-	Voice      *VoiceConfig       `json:"voice"`      // 语音配置
-	App        *AppConfig         `json:"app"`        // 应用运行时配置
+	Characters  []*CharacterConfig             `json:"characters"`  // 角色列表
+	ActiveID    string                         `json:"active_id"`   // 当前激活的角色ID
+	Voice       *VoiceConfig                   `json:"voice"`       // 语音配置
+	App         *AppConfig                     `json:"app"`         // 应用运行时配置
+	Memory      *MemoryConfig                  `json:"memory"`      // 记忆配置
+	Compression *compression.CompressionConfig `json:"compression"` // 压缩配置
 }
 
 // AppConfig 应用运行时配置
@@ -36,6 +40,25 @@ func DefaultAppConfig() *AppConfig {
 		VoiceEnabled:             false,
 		Language:                 "zh-CN",
 	}
+}
+
+// MemoryConfig 记忆配置
+// 控制记忆存储和显示的相关参数
+type MemoryConfig struct {
+	MaxMemories int `json:"max_memories"` // 最大显示记忆数，注入到prompt时限制条数
+}
+
+// DefaultMemoryConfig 返回默认的记忆配置
+func DefaultMemoryConfig() *MemoryConfig {
+	return &MemoryConfig{
+		MaxMemories: 500, // 默认最多显示500条记忆
+	}
+}
+
+// DefaultCompressionConfig 返回默认的压缩配置
+// 委托给 compression 包提供默认值
+func DefaultCompressionConfig() *compression.CompressionConfig {
+	return compression.DefaultCompressionConfig()
 }
 
 // CharactersConfig 多角色配置结构（向后兼容）
