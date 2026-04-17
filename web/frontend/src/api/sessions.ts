@@ -34,7 +34,7 @@ class ApiRequestError extends Error {
 const ENABLE_MOCK_FALLBACK =
   import.meta.env.DEV || import.meta.env.VITE_ENABLE_MOCK_DATA === "1"
 
-const FALLBACK_STATUS_CODES = new Set([404, 500, 502, 503, 504])
+const FALLBACK_STATUS_CODES = new Set([500, 502, 503, 504])
 
 const now = Date.now()
 
@@ -94,6 +94,10 @@ const mockSessionOrder = ["mock-clawpet-001", "mock-clawpet-002"]
 
 let sessionsFallbackActive = false
 
+function isMockSessionID(id: string): boolean {
+  return mockSessionStore.has(id)
+}
+
 function shouldFallbackToMock(error: unknown): boolean {
   if (!ENABLE_MOCK_FALLBACK) {
     return false
@@ -141,17 +145,19 @@ function getMockSessions(offset: number, limit: number): SessionSummary[] {
 
 function getMockSessionByID(id: string): SessionDetail {
   const detail = mockSessionStore.get(id)
-  if (detail) {
-    return cloneSessionDetail(detail)
+  if (!detail) {
+    throw new Error(`Mock session ${id} not found`)
   }
 
-  return {
-    id,
-    messages: [],
-    summary: "",
-    created: new Date().toISOString(),
-    updated: new Date().toISOString(),
+  return cloneSessionDetail(detail)
+}
+
+function shouldUseMockHistory(id: string, error: unknown): boolean {
+  if (!isMockSessionID(id)) {
+    return false
   }
+
+  return sessionsFallbackActive || shouldFallbackToMock(error)
 }
 
 function toHttpError(res: Response, message: string): ApiRequestError {
@@ -194,7 +200,7 @@ export async function getSessionHistory(id: string): Promise<SessionDetail> {
     sessionsFallbackActive = false
     return res.json()
   } catch (error) {
-    if (sessionsFallbackActive || shouldFallbackToMock(error)) {
+    if (shouldUseMockHistory(id, error)) {
       sessionsFallbackActive = true
       return getMockSessionByID(id)
     }
@@ -214,7 +220,7 @@ export async function deleteSession(id: string): Promise<void> {
     sessionsFallbackActive = false
     return
   } catch (error) {
-    if (sessionsFallbackActive || shouldFallbackToMock(error)) {
+    if (shouldUseMockHistory(id, error)) {
       sessionsFallbackActive = true
       mockSessionStore.delete(id)
       const index = mockSessionOrder.indexOf(id)
