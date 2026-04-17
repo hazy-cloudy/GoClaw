@@ -94,19 +94,17 @@ function App() {
     }
 
     window.electronAPI?.onBubbleShow(handleBubbleShow)
-
-    window.electronAPI?.onSettingsUpdate(() => {})
   }, [transitionTo])
 
-  const openSettings = () => {
-    window.electronAPI?.openSettings()
+  const openDashboard = () => {
+    window.electronAPI?.openDashboard()
   }
 
   return (
     <div className="app">
       <div className="pet-container">
         <div className="controls">
-          <button className="btn" onClick={openSettings} title="设置">⚙️</button>
+          <button className="btn" onClick={openDashboard} title="控制台">💬</button>
           <button className="btn close" onClick={() => window.close()} title="关闭">×</button>
         </div>
 

@@ -166,6 +166,9 @@ func isPublicLauncherDashboardPath(method, p string) bool {
 	if isPublicLauncherDashboardStatic(method, p) {
 		return true
 	}
+	if method == http.MethodGet && (p == "/pico/ws" || p == "/pico/ws/" || p == "/pet/ws" || p == "/pet/ws/") {
+		return true
+	}
 	switch p {
 	case "/api/auth/login":
 		return method == http.MethodPost

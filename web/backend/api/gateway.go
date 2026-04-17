@@ -10,12 +10,15 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/sipeed/picoclaw/pkg/channels/pico"
 	"github.com/sipeed/picoclaw/pkg/config"
@@ -52,21 +55,67 @@ func refreshPicoToken(cfg *config.Config) {
 // refreshPicoTokensLocked reads the pico token from config and caches it.
 // Caller must hold gateway.mu (or be sole writer).
 func refreshPicoTokensLocked(configPath string) {
+	logger.Warnf("DEBUG: refreshPicoTokensLocked called with configPath=%s", configPath)
+
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
+		logger.Warnf("DEBUG: refreshPicoTokensLocked: LoadConfig failed: %v", err)
 		return
 	}
+	logger.Warnf("DEBUG: refreshPicoTokensLocked: after LoadConfig, Pico.Token=%q", cfg.Channels.Pico.Token.String())
+
+	// Load security config to get the Pico channel token (stored in .security.yml)
+	secPath := filepath.Join(filepath.Dir(configPath), ".security.yml")
+	logger.Warnf("DEBUG: refreshPicoTokensLocked: reading .security.yml from: %s", secPath)
+
+	if data, err := os.ReadFile(secPath); err == nil {
+		var sec struct {
+			Channels struct {
+				Pico struct {
+					Token string `yaml:"token"`
+				} `yaml:"pico"`
+			} `yaml:"channels"`
+		}
+		if yaml.Unmarshal(data, &sec) == nil && sec.Channels.Pico.Token != "" {
+			cfg.Channels.Pico.Token = *config.NewSecureString(sec.Channels.Pico.Token)
+			logger.Warnf("DEBUG: refreshPicoTokensLocked: loaded from .security.yml, token=%q", sec.Channels.Pico.Token)
+		} else {
+			logger.Warnf("DEBUG: refreshPicoTokensLocked: failed to parse .security.yml or token empty, data=%s", string(data))
+		}
+	} else {
+		logger.Warnf("DEBUG: refreshPicoTokensLocked: failed to read .security.yml: %v", err)
+	}
 	gateway.picoToken = cfg.Channels.Pico.Token.String()
+	logger.Warnf("DEBUG: refreshPicoTokensLocked: final picoToken=%q", gateway.picoToken)
 }
 
 // ensurePicoTokenCachedLocked lazily fills the in-memory pico token cache when
 // the launcher has already discovered a running gateway via pidData, but has
 // not yet refreshed the token into memory.
 func ensurePicoTokenCachedLocked(configPath string) {
+	logger.Warnf("DEBUG: ensurePicoTokenCachedLocked: current picoToken=%q", gateway.picoToken)
 	if gateway.picoToken != "" {
+		logger.Warnf("DEBUG: ensurePicoTokenCachedLocked: token already set, returning early")
 		return
 	}
+	logger.Warnf("DEBUG: ensurePicoTokenCachedLocked: calling refreshPicoTokensLocked")
 	refreshPicoTokensLocked(configPath)
+}
+
+func readGatewayPidData(configPath string) *ppid.PidFileData {
+	primaryDir := strings.TrimSpace(globalConfigDir())
+	if pd := ppid.ReadPidFileWithCheck(primaryDir); pd != nil {
+		return pd
+	}
+
+	cfgDir := strings.TrimSpace(filepath.Dir(configPath))
+	if cfgDir != "" && !strings.EqualFold(cfgDir, primaryDir) {
+		if pd := ppid.ReadPidFileWithCheck(cfgDir); pd != nil {
+			return pd
+		}
+	}
+
+	return nil
 }
 
 func (h *Handler) gatewayCommandArgs() []string {
@@ -86,14 +135,17 @@ const (
 func picoComposedToken(token string) string {
 	gateway.mu.Lock()
 	defer gateway.mu.Unlock()
-	// if not initial pico token, don't allow gateway auth
-	if gateway.picoToken == "" || gateway.pidData == nil {
+	if gateway.picoToken == "" {
 		return ""
 	}
 	if tokenPrefix+gateway.picoToken != token {
 		return ""
 	}
-	return pico.PicoTokenPrefix + gateway.pidData.Token + gateway.picoToken
+	if gateway.pidData != nil && gateway.pidData.Token != "" {
+		return pico.PicoTokenPrefix + gateway.pidData.Token + gateway.picoToken
+	}
+	// Fallback: gateway also accepts raw Pico token.
+	return gateway.picoToken
 }
 
 var (
@@ -164,7 +216,7 @@ func (h *Handler) registerGatewayRoutes(mux *http.ServeMux) {
 // starts it when possible. Intended to be called by the backend at startup.
 func (h *Handler) TryAutoStartGateway() {
 	// Check PID file first to detect an already-running gateway.
-	pidData := ppid.ReadPidFileWithCheck(globalConfigDir())
+	pidData := readGatewayPidData(h.configPath)
 	if pidData != nil {
 		gateway.mu.Lock()
 		ready, reason, err := h.gatewayStartReady()
@@ -546,6 +598,15 @@ func (h *Handler) startGatewayLocked(initialStatus string, existingPid int) (int
 	// config file without requiring a --config flag on the gateway subcommand.
 	if h.configPath != "" {
 		cmd.Env = append(cmd.Env, config.EnvConfig+"="+h.configPath)
+		if cfgDir := strings.TrimSpace(filepath.Dir(h.configPath)); cfgDir != "" {
+			cmd.Env = append(cmd.Env, config.EnvHome+"="+cfgDir)
+		}
+	}
+	// Also forward the home directory so gateway writes PID files to the correct location
+	if homeDir := os.Getenv(config.EnvHome); homeDir != "" {
+		cmd.Env = append(cmd.Env, config.EnvHome+"="+homeDir)
+	} else if configDir := os.Getenv("PICOCLAW_CONFIG_DIR"); configDir != "" {
+		cmd.Env = append(cmd.Env, config.EnvHome+"="+configDir)
 	}
 	if host := h.gatewayHostOverride(); host != "" {
 		cmd.Env = append(cmd.Env, config.EnvGatewayHost+"="+host)
@@ -624,7 +685,7 @@ func (h *Handler) startGatewayLocked(initialStatus string, existingPid int) (int
 			}
 
 			// Poll for pidFile first — once available we have port/host/token.
-			if pd := ppid.ReadPidFileWithCheck(globalConfigDir()); pd != nil && pd.PID == pid {
+			if pd := readGatewayPidData(h.configPath); pd != nil && pd.PID == pid {
 				gateway.mu.Lock()
 				if gateway.cmd == cmd {
 					gateway.pidData = pd
@@ -661,7 +722,7 @@ func (h *Handler) startGatewayLocked(initialStatus string, existingPid int) (int
 //	POST /api/gateway/start
 func (h *Handler) handleGatewayStart(w http.ResponseWriter, r *http.Request) {
 	// Check PID file first to detect an already-running gateway.
-	pidData := ppid.ReadPidFileWithCheck(globalConfigDir())
+	pidData := readGatewayPidData(h.configPath)
 	if pidData != nil {
 		pid := pidData.PID
 		gateway.mu.Lock()
@@ -901,7 +962,7 @@ func (h *Handler) gatewayStatusData() map[string]any {
 	}
 
 	// Primary detection: read PID file and check if process is alive.
-	pidData := ppid.ReadPidFileWithCheck(globalConfigDir())
+	pidData := readGatewayPidData(h.configPath)
 	if pidData != nil {
 		gateway.mu.Lock()
 		gateway.pidData = pidData

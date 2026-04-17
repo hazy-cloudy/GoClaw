@@ -264,7 +264,9 @@ func main() {
 	handler := middleware.Recoverer(
 		middleware.Logger(
 			middleware.ReferrerPolicyNoReferrer(
-				middleware.JSONContentType(dashAuth),
+				middleware.JSONContentType(
+					middleware.CORS(dashAuth),
+				),
 			),
 		),
 	)

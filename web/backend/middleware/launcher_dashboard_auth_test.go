@@ -35,6 +35,8 @@ func TestLauncherDashboardAuth_AllowsPublicPaths(t *testing.T) {
 	}{
 		{http.MethodGet, "/launcher-login", http.StatusTeapot},
 		{http.MethodGet, "/assets/index.js", http.StatusTeapot},
+		{http.MethodGet, "/pico/ws", http.StatusTeapot},
+		{http.MethodGet, "/pico/ws/", http.StatusTeapot},
 		{http.MethodPost, "/api/auth/login", http.StatusTeapot},
 		{http.MethodGet, "/api/auth/status", http.StatusTeapot},
 		{http.MethodPost, "/api/auth/logout", http.StatusTeapot},

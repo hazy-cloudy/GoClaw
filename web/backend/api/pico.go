@@ -7,7 +7,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httputil"
+	"os"
+	"path/filepath"
 	"time"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/logger"
@@ -15,6 +19,10 @@ import (
 
 // registerPicoRoutes binds Pico Channel management endpoints to the ServeMux.
 func (h *Handler) registerPicoRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/pet/token", h.handleGetPicoToken)
+	mux.HandleFunc("POST /api/pet/token", h.handleRegenPicoToken)
+	mux.HandleFunc("POST /api/pet/setup", h.handlePicoSetup)
+
 	mux.HandleFunc("GET /api/pico/token", h.handleGetPicoToken)
 	mux.HandleFunc("POST /api/pico/token", h.handleRegenPicoToken)
 	mux.HandleFunc("POST /api/pico/setup", h.handlePicoSetup)
@@ -22,6 +30,7 @@ func (h *Handler) registerPicoRoutes(mux *http.ServeMux) {
 	// WebSocket proxy: forward /pico/ws to gateway
 	// This allows the frontend to connect via the same port as the web UI,
 	// avoiding the need to expose extra ports for WebSocket communication.
+	mux.HandleFunc("GET /pet/ws", h.handleWebSocketProxy())
 	mux.HandleFunc("GET /pico/ws", h.handleWebSocketProxy())
 }
 
@@ -55,9 +64,20 @@ func (h *Handler) createWsProxy(origProtocol string, token string) *httputil.Rev
 // It validates the client token before forwarding; rejects immediately on failure.
 func (h *Handler) handleWebSocketProxy() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		logger.Warnf("DEBUG WS: request received, h.configPath=%s", h.configPath)
+
 		gateway.mu.Lock()
+		logger.Warnf("DEBUG WS: current picoToken=%q", gateway.picoToken)
+
+		if gateway.pidData == nil {
+			if pd := readGatewayPidData(h.configPath); pd != nil {
+				logger.Infof("handleWebSocketProxy: found pidData, port=%d, pid=%d", pd.Port, pd.PID)
+				gateway.pidData = pd
+			}
+		}
 		ensurePicoTokenCachedLocked(h.configPath)
-		gatewayAvailable := gateway.pidData != nil
+		logger.Warnf("DEBUG WS: after ensurePicoTokenCachedLocked, picoToken=%q", gateway.picoToken)
+		gatewayAvailable := gateway.picoToken != ""
 		gateway.mu.Unlock()
 
 		if !gatewayAvailable {
@@ -66,9 +86,13 @@ func (h *Handler) handleWebSocketProxy() http.HandlerFunc {
 			return
 		}
 		prot := r.Header.Values(protocolKey)
+		logger.Warnf("DEBUG WS: Sec-Websocket-Protocol header: %v (len=%d)", prot, len(prot))
+
 		if len(prot) > 0 {
 			origProtocol := prot[0]
+			logger.Warnf("DEBUG WS: origProtocol=%q", origProtocol)
 			newToken := picoComposedToken(prot[0])
+			logger.Warnf("DEBUG WS: newToken=%q", newToken)
 			if newToken != "" {
 				h.createWsProxy(origProtocol, newToken).ServeHTTP(w, r)
 				return
@@ -88,6 +112,21 @@ func (h *Handler) handleGetPicoToken(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
 		return
+	}
+
+	// Load security config to get the Pico channel token (stored in .security.yml)
+	secPath := filepath.Join(filepath.Dir(h.configPath), ".security.yml")
+	if data, err := os.ReadFile(secPath); err == nil {
+		var sec struct {
+			Channels struct {
+				Pico struct {
+					Token string `yaml:"token"`
+				} `yaml:"pico"`
+			} `yaml:"channels"`
+		}
+		if yaml.Unmarshal(data, &sec) == nil && sec.Channels.Pico.Token != "" {
+			cfg.Channels.Pico.Token = *config.NewSecureString(sec.Channels.Pico.Token)
+		}
 	}
 
 	wsURL := h.buildWsURL(r)

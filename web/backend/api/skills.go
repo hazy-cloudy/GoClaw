@@ -1088,6 +1088,9 @@ func loadSkillContent(path string) (string, error) {
 }
 
 func globalConfigDir() string {
+	if dir := os.Getenv("PICOCLAW_CONFIG_DIR"); dir != "" {
+		return dir
+	}
 	return config.GetHome()
 }
 
