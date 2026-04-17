@@ -7,19 +7,26 @@ import remarkGfm from "remark-gfm"
 
 import { Button } from "@/components/ui/button"
 import { formatMessageTime } from "@/hooks/use-pico-chat"
+import type { ChatAttachment } from "@/store/chat"
 
 interface AssistantMessageProps {
   content: string
   timestamp?: string | number
+  attachments?: ChatAttachment[]
 }
 
 export function AssistantMessage({
   content,
   timestamp = "",
+  attachments = [],
 }: AssistantMessageProps) {
   const [isCopied, setIsCopied] = useState(false)
   const formattedTimestamp =
     timestamp !== "" ? formatMessageTime(timestamp) : ""
+  const imageAttachments = attachments.filter(
+    (attachment) => attachment.type === "image",
+  )
+  const hasText = content.trim().length > 0
 
   const handleCopy = () => {
     navigator.clipboard.writeText(content).then(() => {
@@ -35,7 +42,7 @@ export function AssistantMessage({
           <span>PicoClaw</span>
           {formattedTimestamp && (
             <>
-              <span className="opacity-50">•</span>
+              <span className="opacity-50">|</span>
               <span>{formattedTimestamp}</span>
             </>
           )}
@@ -43,26 +50,44 @@ export function AssistantMessage({
       </div>
 
       <div className="bg-card text-card-foreground relative overflow-hidden rounded-xl border">
-        <div className="prose dark:prose-invert prose-p:my-2 prose-pre:my-2 prose-pre:overflow-x-auto prose-pre:rounded-lg prose-pre:border prose-pre:bg-zinc-950 prose-pre:p-3 max-w-none p-4 text-[15px] leading-relaxed [overflow-wrap:anywhere] break-words">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            rehypePlugins={[rehypeRaw, rehypeSanitize]}
+        {imageAttachments.length > 0 && (
+          <div className="grid gap-2 p-4 pb-0 sm:grid-cols-2">
+            {imageAttachments.map((attachment, index) => (
+              <img
+                key={`${attachment.url}-${index}`}
+                src={attachment.url}
+                alt={attachment.filename || "Assistant image"}
+                className="max-h-80 w-full rounded-md object-cover"
+              />
+            ))}
+          </div>
+        )}
+
+        {hasText && (
+          <div className="prose dark:prose-invert prose-p:my-2 prose-pre:my-2 prose-pre:overflow-x-auto prose-pre:rounded-lg prose-pre:border prose-pre:bg-zinc-950 prose-pre:p-3 max-w-none p-4 text-[15px] leading-relaxed [overflow-wrap:anywhere] break-words">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              rehypePlugins={[rehypeRaw, rehypeSanitize]}
+            >
+              {content}
+            </ReactMarkdown>
+          </div>
+        )}
+
+        {hasText && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="bg-background/50 hover:bg-background/80 absolute top-2 right-2 h-7 w-7 opacity-0 transition-opacity group-hover:opacity-100"
+            onClick={handleCopy}
           >
-            {content}
-          </ReactMarkdown>
-        </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="bg-background/50 hover:bg-background/80 absolute top-2 right-2 h-7 w-7 opacity-0 transition-opacity group-hover:opacity-100"
-          onClick={handleCopy}
-        >
-          {isCopied ? (
-            <IconCheck className="h-4 w-4 text-green-500" />
-          ) : (
-            <IconCopy className="text-muted-foreground h-4 w-4" />
-          )}
-        </Button>
+            {isCopied ? (
+              <IconCheck className="h-4 w-4 text-green-500" />
+            ) : (
+              <IconCopy className="text-muted-foreground h-4 w-4" />
+            )}
+          </Button>
+        )}
       </div>
     </div>
   )

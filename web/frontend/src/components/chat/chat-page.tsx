@@ -1,8 +1,11 @@
-import { IconPlus } from "@tabler/icons-react"
+import { IconPlus, IconTool } from "@tabler/icons-react"
+import { Link } from "@tanstack/react-router"
+import { useQuery } from "@tanstack/react-query"
 import { type ChangeEvent, useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
+import { getTools } from "@/api/tools"
 import { AssistantMessage } from "@/components/chat/assistant-message"
 import { ChatComposer } from "@/components/chat/chat-composer"
 import { ChatEmptyState } from "@/components/chat/chat-empty-state"
@@ -76,6 +79,20 @@ export function ChatPage() {
     handleSetDefault,
   } = useChatModels({ isConnected: isGatewayRunning })
   const canSend = isChatConnected && Boolean(defaultModelName)
+
+  const { data: toolSupport } = useQuery({
+    queryKey: ["tools", "chat"],
+    queryFn: getTools,
+    staleTime: 15_000,
+    enabled: isGatewayRunning,
+  })
+
+  const enabledToolCount =
+    toolSupport?.tools.filter((item) => item.status === "enabled").length ??
+    undefined
+  const toolInfoSource = toolSupport?.source
+  const showToolDisabledHint =
+    isChatConnected && enabledToolCount !== undefined && enabledToolCount <= 0
 
   const {
     sessions,
@@ -239,6 +256,8 @@ export function ChatPage() {
               hasAvailableModels={hasAvailableModels}
               defaultModelName={defaultModelName}
               isConnected={isGatewayRunning}
+              enabledToolCount={enabledToolCount}
+              toolInfoSource={toolInfoSource}
             />
           )}
 
@@ -248,6 +267,7 @@ export function ChatPage() {
                 <AssistantMessage
                   content={msg.content}
                   timestamp={msg.timestamp}
+                  attachments={msg.attachments}
                 />
               ) : (
                 <UserMessage
@@ -269,6 +289,17 @@ export function ChatPage() {
         className="hidden"
         onChange={handleImageSelection}
       />
+
+      {showToolDisabledHint && (
+        <div className="border-border/70 bg-amber-50/70 text-amber-800 flex items-center justify-center gap-2 border-t px-4 py-2 text-xs">
+          <IconTool className="size-3.5" />
+          <span>Tools are currently disabled. Enable one in</span>
+          <Link to="/agent/tools" className="underline underline-offset-2">
+            Tools
+          </Link>
+          <span>to allow tool actions.</span>
+        </div>
+      )}
 
       <ChatComposer
         input={input}
