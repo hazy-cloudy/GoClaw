@@ -456,8 +456,8 @@ func (m *Manager) SetupHTTPServer(addr string, healthServer *health.Server) {
 	m.registerHTTPHandlersLocked()
 
 	m.httpServer = &http.Server{
-		Addr:         addr,
-		Handler:      corsMiddleware(m.mux),
+		Addr:    addr,
+		Handler: corsMiddleware(m.mux),
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 	}
@@ -469,6 +469,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
