@@ -26,13 +26,61 @@ jobs:
         include:
           - goos: linux
             goarch: amd64
-            archive_ext: tar.gz
+            file_os: Linux
+            file_arch: x86_64
+          - goos: linux
+            goarch: arm64
+            file_os: Linux
+            file_arch: arm64
+          - goos: linux
+            goarch: arm
+            goarm: "7"
+            file_os: Linux
+            file_arch: armv7
+          - goos: linux
+            goarch: riscv64
+            file_os: Linux
+            file_arch: riscv64
+          - goos: linux
+            goarch: loong64
+            file_os: Linux
+            file_arch: loong64
+          - goos: linux
+            goarch: mipsle
+            file_os: Linux
+            file_arch: mipsle
           - goos: darwin
             goarch: amd64
-            archive_ext: tar.gz
+            file_os: Darwin
+            file_arch: x86_64
+          - goos: darwin
+            goarch: arm64
+            file_os: Darwin
+            file_arch: arm64
           - goos: windows
             goarch: amd64
-            archive_ext: zip
+            file_os: Windows
+            file_arch: x86_64
+          - goos: windows
+            goarch: arm64
+            file_os: Windows
+            file_arch: arm64
+          - goos: freebsd
+            goarch: amd64
+            file_os: Freebsd
+            file_arch: x86_64
+          - goos: freebsd
+            goarch: arm64
+            file_os: Freebsd
+            file_arch: arm64
+          - goos: netbsd
+            goarch: amd64
+            file_os: Netbsd
+            file_arch: x86_64
+          - goos: netbsd
+            goarch: arm64
+            file_os: Netbsd
+            file_arch: arm64
 
     steps:
       - name: Checkout
@@ -43,13 +91,17 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Prepare onboard workspace
+        shell: bash
+        run: go generate ./cmd/picoclaw/internal/onboard
+
       - name: Build
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist
 
-          BIN="${APP_NAME}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          BIN="${APP_NAME}"
           if [[ "${{ matrix.goos }}" == "windows" ]]; then
             BIN="${BIN}.exe"
           fi
@@ -57,8 +109,9 @@ jobs:
           VERSION="${GITHUB_REF_NAME}"
           SHORT_SHA="${GITHUB_SHA::7}"
           BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          GOARM="${{ matrix.goarm || '' }}"
 
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 \
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} GOARM="${GOARM}" CGO_ENABLED=0 \
             go build \
               -trimpath \
               -tags "${BUILD_TAGS}" \
@@ -72,8 +125,8 @@ jobs:
           set -euo pipefail
           cd dist
 
-          BASE="${APP_NAME}-${GITHUB_REF_NAME}-${{ matrix.goos }}-${{ matrix.goarch }}"
-          BIN="${APP_NAME}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          BASE="${APP_NAME}_${{ matrix.file_os }}_${{ matrix.file_arch }}"
+          BIN="${APP_NAME}"
 
           if [[ "${{ matrix.goos }}" == "windows" ]]; then
             zip "${BASE}.zip" "${BIN}.exe"
@@ -84,7 +137,7 @@ jobs:
       - name: Upload package artifact
         uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: release-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goarm && format('-arm{0}', matrix.goarm) || '' }}
           path: |
             dist/*.tar.gz
             dist/*.zip
@@ -108,6 +161,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          cd dist
+
+          sha256sum * > checksums.txt
 
           TAG="${GITHUB_REF_NAME}"
           if ! gh release view "${TAG}" >/dev/null 2>&1; then
@@ -116,4 +172,4 @@ jobs:
               --generate-notes
           fi
 
-          gh release upload "${TAG}" dist/* --clobber
+          gh release upload "${TAG}" * --clobber
