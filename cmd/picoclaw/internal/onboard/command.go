@@ -6,7 +6,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-//go:generate go run ../../../../scripts/copy_workspace.go
+//go:generate pwsh -Command "Copy-Item -Path '../../../../workspace' -Destination 'workspace' -Recurse -Force"
 //go:embed workspace
 var embeddedFiles embed.FS
 
