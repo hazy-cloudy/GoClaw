@@ -2,14 +2,14 @@
 
 import { useEffect, useMemo, useRef, useState } from "react"
 import {
-  AlarmClock,
   BookOpen,
-  CalendarDays,
   Cat,
   Check,
   ChevronDown,
+  Crown,
   FolderUp,
   Gauge,
+  Heart,
   Loader2,
   Minus,
   MoonStar,
@@ -24,7 +24,7 @@ import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
 import { API_ENDPOINTS, getApiBaseUrl } from "@/lib/api"
 import { fetchWithAuthRetry } from "@/lib/api/auth-bootstrap"
-import { saveOnboardingState } from "@/lib/onboarding"
+import { saveOnboardingState, SCHEDULE_ICS_NAME_STORAGE_KEY } from "@/lib/onboarding"
 import { buildLearningRhythm, buildPressurePlan } from "@/lib/student-insights"
 
 type SetupStatus = "pending" | "running" | "done" | "failed"
@@ -41,7 +41,7 @@ interface OnboardingWizardProps {
   onFinish: () => void
 }
 
-const steps = ["契约确认", "学习画像", "桌宠人格"]
+const steps = ["契约确认", "情报录入", "桌宠人格"]
 const milestones = ["认识你", "理解你", "陪伴你"]
 
 const setupTemplate: SetupTask[] = [
@@ -62,23 +62,41 @@ const permissionHints = {
   screenView: "仅用于判断你是否在学习场景，便于桌宠切换提醒语气。",
   appCheck: "检测是否切到娱乐应用，触发更有梗的拉回提醒。",
   localDocRead: "建立资料关键词索引，提问时能更快帮你定位文件。",
-  popupReminder: "临近 DDL 时允许桌宠主动打断提醒，防止错过。",
+  popupReminder: "需要时允许桌宠主动打断提醒，避免任务拖延。",
 }
 
-const identityOptions = [
-  { id: "student", label: "学生（已支持）", description: "当前版本完整支持学生场景引导。", enabled: true },
-  { id: "teacher", label: "教师（开发中）", description: "后续会支持课程管理与授课节奏。", enabled: false },
-  { id: "worker", label: "职场用户（开发中）", description: "后续会支持会议与任务优先级管理。", enabled: false },
-] as const
-
-const presetMajors = ["计算机", "法学", "临床医学", "汉语言", "金融", "艺术设计"]
+const presetMajors = [
+  { value: "计算机", label: "计算机 · 代码咏唱" },
+  { value: "法学", label: "法学 · 辩论开大" },
+  { value: "临床医学", label: "临床医学 · 白衣战士" },
+  { value: "汉语言", label: "汉语言 · 文采暴击" },
+  { value: "金融", label: "金融 · 数字炼金" },
+  { value: "艺术设计", label: "艺术设计 · 灵感喷泉" },
+]
 const breakerVocabulary = ["高数", "四六级", "早八", "实验报告", "课程设计", "论文", "答辩"]
 const nicknameTags = ["义父", "铲屎官", "大冤种", "少侠", "学术巨佬"]
 const loadingComfortLines = [
-  "我在替你检查连接，马上就好。",
-  "正在和网关打招呼，别着急喵。",
-  "快完成了，我会把环境整理干净。",
+  "正在帮你给小窝通风，马上就好喵。",
+  "我在和网关贴贴握手，别急别急~",
+  "最后几步啦，桌宠已经在门口摇尾巴。",
 ]
+const showcaseGifs = ["/pets/standby1.gif", "/pets/happy1.gif", "/pets/listening.gif", "/pets/celebrate_out.gif"]
+const showcaseLines = [
+  "随机掉落今日桌宠皮肤，看看谁先来贴贴。",
+  "这只负责卖萌，那只负责催你交作业。",
+  "完成初始化后，它会按照你的节奏出没。",
+  "把状态调到舒服区，桌宠会更懂你的小情绪。",
+]
+const MIN_SUMMON_LOADING_MS = 6200
+
+function pickRandomIndex(size: number, current?: number): number {
+  if (size <= 1) return 0
+  let next = Math.floor(Math.random() * size)
+  while (typeof current === "number" && next === current) {
+    next = Math.floor(Math.random() * size)
+  }
+  return next
+}
 
 function withStatus(tasks: SetupTask[], id: string, status: SetupStatus): SetupTask[] {
   return tasks.map((task) => (task.id === id ? { ...task, status } : task))
@@ -93,14 +111,12 @@ function TaskIcon({ status }: { status: SetupStatus }) {
 
 export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
   const [step, setStep] = useState(0)
-  const [userIdentity, setUserIdentity] = useState<"student" | "teacher" | "worker" | null>(null)
 
   const [setupTasks, setSetupTasks] = useState<SetupTask[]>(setupTemplate)
   const [setupRunning, setSetupRunning] = useState(false)
   const [setupError, setSetupError] = useState<string | null>(null)
-  const [setupReady, setSetupReady] = useState(false)
-  const [autoSetupStarted, setAutoSetupStarted] = useState(false)
   const [loadingLineIndex, setLoadingLineIndex] = useState(0)
+  const [summonInProgress, setSummonInProgress] = useState(false)
 
   const [profile, setProfile] = useState({ displayName: "", role: "计算机", language: "中文" })
   const [app, setApp] = useState({
@@ -117,7 +133,6 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
     popupReminder: true,
   })
 
-  const [deadlineDate, setDeadlineDate] = useState("")
   const [anxietyLevel, setAnxietyLevel] = useState(58)
   const [sleepHour, setSleepHour] = useState(1)
   const [selectedBreakers, setSelectedBreakers] = useState<string[]>(["早八", "论文"])
@@ -130,64 +145,88 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
   const [customNickname, setCustomNickname] = useState("")
   const [showCompletionCard, setShowCompletionCard] = useState(false)
   const [previewReminderText, setPreviewReminderText] = useState("")
+  const [showcaseIndex, setShowcaseIndex] = useState(() => pickRandomIndex(showcaseGifs.length))
+  const [isMajorMenuOpen, setIsMajorMenuOpen] = useState(false)
+  const [displayProgress, setDisplayProgress] = useState(0)
+  const [isFinishing, setIsFinishing] = useState(false)
+  const displayProgressRef = useRef(0)
+  const majorMenuRef = useRef<HTMLDivElement | null>(null)
 
-  const dateInputRef = useRef<HTMLInputElement | null>(null)
   const hasElectronApi = typeof window !== "undefined" && Boolean(window.electronAPI)
 
-  const setupProgress = useMemo(() => {
-    const done = setupTasks.filter((t) => t.status === "done").length
-    return (done / setupTasks.length) * 100
-  }, [setupTasks])
+  useEffect(() => {
+    displayProgressRef.current = displayProgress
+  }, [displayProgress])
 
   const learningRhythmInsight = useMemo(() => {
     return buildLearningRhythm({
       major: profile.role,
       sleepHour,
       anxietyLevel,
-      deadlineDate,
+      deadlineDate: "",
       selectedBreakers,
       hasScheduleFile: Boolean(icsFileName),
     })
-  }, [anxietyLevel, deadlineDate, icsFileName, profile.role, selectedBreakers, sleepHour])
+  }, [anxietyLevel, icsFileName, profile.role, selectedBreakers, sleepHour])
 
   const pressurePlanInsight = useMemo(() => {
     return buildPressurePlan({
       major: profile.role,
       sleepHour,
       anxietyLevel,
-      deadlineDate,
+      deadlineDate: "",
       selectedBreakers,
       hasScheduleFile: Boolean(icsFileName),
     })
-  }, [anxietyLevel, deadlineDate, icsFileName, profile.role, selectedBreakers, sleepHour])
+  }, [anxietyLevel, icsFileName, profile.role, selectedBreakers, sleepHour])
 
   const moodTheme = useMemo(() => {
     if (pressurePlanInsight.level === 'critical' || pressurePlanInsight.level === 'high') {
       return {
         shellGradient: pressurePlanInsight.level === 'critical'
-          ? "from-[#ffe3e6] via-[#ffd3d8] to-[#ffc2cb]"
-          : "from-[#ffe7d7] via-[#ffd8bf] to-[#ffc79f]",
-        sidePanel: pressurePlanInsight.level === 'critical' ? "bg-[#ffd0d7]" : "bg-[#ffd4b4]",
+          ? "from-[#f1dfd9] via-[#f2e0dc] to-[#f4e4e2]"
+          : "from-[#efe0d3] via-[#f1e1d7] to-[#f3e4de]",
+        sidePanel: pressurePlanInsight.level === 'critical' ? "bg-[#f1e0dc]" : "bg-[#efe2d7]",
         accent: pressurePlanInsight.level === 'critical' ? "bg-[#ff5b5b] hover:bg-[#e54848]" : "bg-[#ff8a3d] hover:bg-[#f07324]",
-        shellTint: pressurePlanInsight.level === 'critical' ? '#ffb5c3' : '#ffbf8b',
-        sideTint: pressurePlanInsight.level === 'critical' ? '#ff9eb1' : '#ffb172',
+        shellTint: pressurePlanInsight.level === 'critical' ? '#f1e1dd' : '#efe2d8',
+        sideTint: pressurePlanInsight.level === 'critical' ? '#f0e0dc' : '#efe1d7',
+        cardGlow: pressurePlanInsight.level === 'critical'
+          ? "shadow-[0_14px_35px_-22px_rgba(245,58,104,0.75)]"
+          : "shadow-[0_14px_35px_-22px_rgba(249,115,22,0.68)]",
+        chipActive: pressurePlanInsight.level === 'critical'
+          ? "border-fuchsia-200 bg-gradient-to-r from-rose-100 via-fuchsia-100 to-violet-100 text-rose-900 shadow-[0_0_20px_rgba(236,72,153,0.35)]"
+          : "border-amber-200 bg-gradient-to-r from-orange-100 via-amber-100 to-yellow-100 text-amber-900 shadow-[0_0_20px_rgba(245,158,11,0.35)]",
+        chipIdle: pressurePlanInsight.level === 'critical'
+          ? "border-rose-200/70 bg-white/75 text-rose-800 hover:border-fuchsia-300 hover:bg-rose-50"
+          : "border-orange-200/70 bg-white/80 text-orange-800 hover:border-amber-300 hover:bg-amber-50",
+        personalityPanel: pressurePlanInsight.level === 'critical'
+          ? "border-fuchsia-200/80 bg-[linear-gradient(120deg,rgba(255,240,246,0.95),rgba(255,228,239,0.92),rgba(240,232,255,0.9))]"
+          : "border-orange-200/80 bg-[linear-gradient(120deg,rgba(255,245,233,0.95),rgba(255,232,221,0.92),rgba(238,240,255,0.9))]",
       }
     }
     if (pressurePlanInsight.level === 'medium') {
       return {
-        shellGradient: "from-[#fff2df] via-[#ffe9d1] to-[#fbdcbc]",
-        sidePanel: "bg-[#ffe7cc]",
+        shellGradient: "from-[#ecddcf] via-[#f0ddd8] to-[#f2e1de]",
+        sidePanel: "bg-[#f0ddd7]",
         accent: "bg-[#d66a12] hover:bg-[#bf5c0c]",
-        shellTint: '#ffd79f',
-        sideTint: '#ffc681',
+        shellTint: '#ecdccf',
+        sideTint: '#efdbd6',
+        cardGlow: "shadow-[0_14px_35px_-22px_rgba(217,119,6,0.6)]",
+        chipActive: "border-orange-200 bg-gradient-to-r from-amber-100 via-orange-100 to-rose-100 text-orange-900 shadow-[0_0_20px_rgba(249,115,22,0.3)]",
+        chipIdle: "border-amber-200/70 bg-white/80 text-amber-800 hover:border-orange-300 hover:bg-orange-50",
+        personalityPanel: "border-amber-200/80 bg-[linear-gradient(120deg,rgba(255,246,232,0.95),rgba(246,236,255,0.9),rgba(232,244,255,0.9))]",
       }
     }
     return {
-      shellGradient: "from-[#e9fff4] via-[#f2fff8] to-[#dbfff0]",
-      sidePanel: "bg-[#dbfaea]",
+      shellGradient: "from-[#e9efe5] via-[#ecf0e8] to-[#edf1eb]",
+      sidePanel: "bg-[#e8eee6]",
       accent: "bg-[#1f9f6f] hover:bg-[#16875c]",
-      shellTint: '#bff4d8',
-      sideTint: '#a2eec8',
+      shellTint: '#e8efe7',
+      sideTint: '#e6ede5',
+      cardGlow: "shadow-[0_14px_35px_-22px_rgba(16,185,129,0.62)]",
+      chipActive: "border-emerald-200 bg-gradient-to-r from-emerald-100 via-cyan-100 to-sky-100 text-emerald-900 shadow-[0_0_20px_rgba(45,212,191,0.35)]",
+      chipIdle: "border-emerald-200/70 bg-white/80 text-emerald-800 hover:border-cyan-300 hover:bg-cyan-50",
+      personalityPanel: "border-emerald-200/80 bg-[linear-gradient(120deg,rgba(237,255,246,0.95),rgba(230,250,255,0.92),rgba(236,240,255,0.88))]",
     }
   }, [pressurePlanInsight.level])
 
@@ -199,13 +238,7 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
       return `这次没连上，不是你的问题。${setupError}，我们可以再试一次。`
     }
     if (step === 0) {
-      if (userIdentity !== "student") {
-        return "先确认你是学生身份，我才能启用这套学习陪伴模型。"
-      }
-      if (setupReady) {
-        return "准备完成，我已经能理解你的基础学习场景了。"
-      }
-      return "我在预热中，先把你的身份和偏好告诉我吧。"
+      return "先把你的喜好悄悄告诉我，召唤时我会把环境一次性收拾好。"
     }
     if (step === 1) {
       if (icsFileName) {
@@ -214,16 +247,15 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
       if (selectedBreakers.length > 3) {
         return "我看到你的压力点比较密集，后续提醒会更聚焦、少废话。"
       }
-      return `已记录你的${profile.role}学习画像，我会按${sleepHour.toString().padStart(2, "0")}:00的作息来安排提醒。`
+      return `已记录你的${profile.role}情报，我会按${sleepHour.toString().padStart(2, "0")}:00的作息来安排提醒。`
     }
     const calling = customNickname.trim() || nickname
-    return `明白了，以后我会叫你“${calling}”，并按${personalityTone}风格陪你推进任务。`
-  }, [customNickname, icsFileName, loadingLineIndex, nickname, personalityTone, profile.role, selectedBreakers.length, setupError, setupReady, setupRunning, sleepHour, step, userIdentity])
+    return `收到！以后我会叫你“${calling}”，用${personalityTone}模式陪你稳稳推进任务。`
+  }, [customNickname, icsFileName, loadingLineIndex, nickname, personalityTone, profile.role, selectedBreakers.length, setupError, setupRunning, sleepHour, step])
 
   const runSetup = async (): Promise<boolean> => {
     setSetupRunning(true)
     setSetupError(null)
-    setSetupReady(false)
     setSetupTasks(setupTemplate)
 
     try {
@@ -252,7 +284,6 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
       if (!tokenRes.ok) throw new Error(`连接验证失败（${tokenRes.status}）`)
 
       setSetupTasks((prev) => withStatus(prev, "token", "done"))
-      setSetupReady(true)
       return true
     } catch (err) {
       const message = err instanceof Error ? err.message : "初始化失败"
@@ -263,14 +294,6 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
       setSetupRunning(false)
     }
   }
-
-  useEffect(() => {
-    if (step !== 0 || autoSetupStarted) {
-      return
-    }
-    setAutoSetupStarted(true)
-    runSetup().catch(() => {})
-  }, [autoSetupStarted, step])
 
   useEffect(() => {
     if (!setupRunning) {
@@ -285,6 +308,16 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
   }, [setupRunning])
 
   useEffect(() => {
+    try {
+      const savedName = window.localStorage.getItem(SCHEDULE_ICS_NAME_STORAGE_KEY)
+      if (savedName) {
+        setIcsFileName(savedName)
+      }
+    } catch {
+    }
+  }, [])
+
+  useEffect(() => {
     setShowCompletionCard(false)
   }, [step])
 
@@ -294,6 +327,56 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
     }
     document.documentElement.setAttribute("data-mood-level", pressurePlanInsight.level)
   }, [pressurePlanInsight.level])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setShowcaseIndex((prev) => pickRandomIndex(showcaseGifs.length, prev))
+    }, 4200)
+
+    return () => window.clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
+    if (!isMajorMenuOpen) return
+
+    const closeMenu = (event: MouseEvent) => {
+      const target = event.target as Node
+      if (!majorMenuRef.current?.contains(target)) {
+        setIsMajorMenuOpen(false)
+      }
+    }
+
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsMajorMenuOpen(false)
+      }
+    }
+
+    window.addEventListener("mousedown", closeMenu)
+    window.addEventListener("keydown", onEscape)
+
+    return () => {
+      window.removeEventListener("mousedown", closeMenu)
+      window.removeEventListener("keydown", onEscape)
+    }
+  }, [isMajorMenuOpen])
+
+  useEffect(() => {
+    if (!summonInProgress) {
+      setDisplayProgress(0)
+      return
+    }
+
+    const timer = window.setInterval(() => {
+      setDisplayProgress((prev) => {
+        const cap = setupRunning ? 94 : 98
+        const step = setupRunning ? 1.45 : 0.55
+        return Math.min(cap, prev + step)
+      })
+    }, 120)
+
+    return () => window.clearInterval(timer)
+  }, [setupRunning, summonInProgress])
 
   const toggleBreaker = (value: string) => {
     setSelectedBreakers((prev) => (prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value]))
@@ -307,17 +390,9 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
     }
     setSetupError(null)
     setIcsFileName(file.name)
-  }
-
-  const quickPickDeadline = () => {
-    if (dateInputRef.current && typeof dateInputRef.current.showPicker === "function") {
-      dateInputRef.current.showPicker()
-      return
-    }
-    if (!deadlineDate) {
-      const nextWeek = new Date()
-      nextWeek.setDate(nextWeek.getDate() + 7)
-      setDeadlineDate(nextWeek.toISOString().slice(0, 10))
+    try {
+      window.localStorage.setItem(SCHEDULE_ICS_NAME_STORAGE_KEY, file.name)
+    } catch {
     }
   }
 
@@ -335,12 +410,32 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
   }
 
   const complete = async () => {
-    let ready = setupReady
+    setSummonInProgress(true)
+    setDisplayProgress(4)
+    const [ready] = await Promise.all([
+      runSetup(),
+      new Promise((resolve) => window.setTimeout(resolve, MIN_SUMMON_LOADING_MS)),
+    ])
+
+    await new Promise<void>((resolve) => {
+      const start = performance.now()
+      const from = displayProgressRef.current
+      const duration = 920
+      const tick = (now: number) => {
+        const t = Math.min((now - start) / duration, 1)
+        const eased = 1 - Math.pow(1 - t, 3)
+        setDisplayProgress(from + (100 - from) * eased)
+        if (t < 1) {
+          window.requestAnimationFrame(tick)
+          return
+        }
+        resolve()
+      }
+      window.requestAnimationFrame(tick)
+    })
+
     if (!ready) {
-      ready = await runSetup()
-    }
-    if (!ready) {
-      setSetupError("当前连接初始化未完成，已先为你进入控制台；你可以稍后在配置页继续重试。")
+      setSetupError("自动配置未完全成功，已先进入控制台；你可以稍后在配置页重试。")
     }
 
     const finalNickname = customNickname.trim() || nickname
@@ -354,7 +449,7 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
     }
 
     try {
-      window.localStorage.setItem("petclaw.userIdentity", userIdentity ?? "student")
+      window.localStorage.setItem("petclaw.userIdentity", "student")
     } catch {
     }
 
@@ -393,14 +488,18 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
         pressurePlan: pressurePlanInsight,
       },
     })
-    onFinish()
+    setIsFinishing(true)
+    window.setTimeout(() => {
+      onFinish()
+    }, 420)
   }
 
   return (
     <div
-      className={`relative h-full w-full overflow-hidden rounded-[2rem] border border-[#e8dccd] bg-gradient-to-br ${moodTheme.shellGradient} shadow-[0_30px_90px_-50px_rgba(130,84,23,0.5)] transition-[background-color,box-shadow] duration-700 ease-out`}
-      style={{ backgroundColor: moodTheme.shellTint, backgroundBlendMode: 'multiply' }}
+      className={`onboarding-flow-bg relative h-full w-full overflow-hidden rounded-[2rem] border border-[#e8dccd] bg-gradient-to-br ${moodTheme.shellGradient} shadow-[0_30px_90px_-50px_rgba(130,84,23,0.5)] transition-[background-color,box-shadow,opacity,transform] duration-700 ease-out ${isFinishing ? "opacity-0 scale-[0.992]" : "opacity-100 scale-100"}`}
+      style={{ backgroundColor: moodTheme.shellTint, backgroundBlendMode: 'normal' }}
     >
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_20%,rgba(255,255,255,0.5),transparent_35%),radial-gradient(circle_at_85%_25%,rgba(248,192,255,0.25),transparent_38%),radial-gradient(circle_at_50%_85%,rgba(123,211,255,0.2),transparent_42%)]" />
       <div className="grid h-full min-h-0 grid-cols-1 md:grid-cols-[1.25fr_0.75fr]">
         <div className="flex h-full min-h-0 flex-col">
           <div className="border-b border-[#eadfce] px-6 py-5 md:px-8">
@@ -413,7 +512,7 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
               <div className="flex items-center gap-1 rounded-xl border border-[#e4d4c0] bg-white/80 p-1 shadow-sm">
                 <button
                   type="button"
-                  className="rounded-md p-1.5 text-[#7a6755] hover:bg-[#f6ebdd] disabled:cursor-not-allowed disabled:opacity-40"
+                  className="rounded-md p-1.5 text-gradient-milestone hover:bg-[#f6ebdd] disabled:cursor-not-allowed disabled:opacity-40"
                   onClick={() => window.electronAPI?.minimizeWindow?.()}
                   disabled={!hasElectronApi}
                   title="最小化"
@@ -422,7 +521,7 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
                 </button>
                 <button
                   type="button"
-                  className="rounded-md p-1.5 text-[#7a6755] hover:bg-[#f6ebdd] disabled:cursor-not-allowed disabled:opacity-40"
+                  className="rounded-md p-1.5 text-gradient-milestone hover:bg-[#f6ebdd] disabled:cursor-not-allowed disabled:opacity-40"
                   onClick={() => window.electronAPI?.toggleMaximizeWindow?.()}
                   disabled={!hasElectronApi}
                   title="最大化 / 还原"
@@ -431,7 +530,7 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
                 </button>
                 <button
                   type="button"
-                  className="rounded-md p-1.5 text-[#7a6755] hover:bg-[#f8d9d6] hover:text-[#b42318]"
+                  className="rounded-md p-1.5 text-gradient-milestone hover:bg-[#f8d9d6] hover:text-[#b42318]"
                   onClick={() => {
                     if (hasElectronApi) {
                       window.electronAPI?.closeWindow?.()
@@ -445,53 +544,31 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
                 </button>
               </div>
             </div>
-            <h1 className="text-2xl font-semibold text-[#3f2d1f] md:text-3xl">{steps[step]}</h1>
-            <p className="mt-1 text-sm text-[#7a6755]">阶段：{milestones[step]} · 已完成 {step + 1}/3</p>
+            <h1 className="text-2xl font-semibold text-gradient-warm text-shadow-warm md:text-3xl animate-float">{steps[step]}</h1>
+            <p className="mt-1 text-sm text-gradient-milestone font-decorated">阶段：<span className="animate-text-shimmer">{milestones[step]}</span> · 已完成 {step + 1}/3</p>
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6 md:px-8">
             {step === 0 && (
               <div className="space-y-5">
-                <div className="rounded-2xl border border-[#ecd8bd] bg-[#fff4e5] p-5">
-                  <div className="mb-2 flex items-center gap-2 text-xl font-semibold text-[#3f2d1f]">
-                    <Sparkles className="h-5 w-5 text-[#d4812f]" />
+                <div className={`rounded-2xl border border-white/70 bg-[linear-gradient(120deg,rgba(255,255,255,0.9),rgba(255,246,228,0.82),rgba(255,238,251,0.82))] p-5 ${moodTheme.cardGlow}`}>
+                  <div className="mb-2 flex items-center gap-2 text-xl font-semibold text-gradient-warm text-shadow-soft">
+                    <Sparkles className="h-5 w-5 animate-text-shimmer" />
                     注入灵力源（API Key）
                   </div>
                   <Input
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
                     placeholder="可选：填写你自己的 API Key，不填也可继续"
-                    className="mt-3 rounded-full border-[#e8cfae] bg-white"
+                    className="mt-3 rounded-full border-[#e8cfae] bg-white/95 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.75)]"
                   />
-                  <p className="mt-2 text-xs text-[#7a6755]">用于切换到你的私有模型额度，不会影响默认可用功能。</p>
+                  <p className="mt-2 text-xs text-gradient-milestone">用于切换到你的私有模型额度，不会影响默认可用功能。</p>
                 </div>
 
-                <div className="rounded-2xl border border-[#eadfce] bg-[#fffaf4] p-5">
-                  <p className="mb-2 text-lg font-semibold text-[#3f2d1f]">你目前的身份</p>
-                  <p className="mb-3 text-sm text-[#7a6755]">当前初始化流程专为学生设计，请先选择“学生”继续，其他身份将后续开放。</p>
-                  <div className="grid gap-2">
-                    {identityOptions.map((item) => {
-                      const selected = userIdentity === item.id
-                      return (
-                        <button
-                          key={item.id}
-                          type="button"
-                          disabled={!item.enabled}
-                          onClick={() => setUserIdentity(item.id)}
-                          className={`rounded-xl border px-4 py-3 text-left transition ${selected ? "border-[#d17a2a] bg-[#ffe8cc]" : "border-[#e2d4c3] bg-white"} ${item.enabled ? "hover:border-[#d17a2a]" : "cursor-not-allowed opacity-60"}`}
-                        >
-                          <p className="text-sm font-medium text-[#4d3929]">{item.label}</p>
-                          <p className="text-xs text-[#7a6755]">{item.description}</p>
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-
-                <div className="space-y-2 rounded-2xl border border-dashed border-[#e6cfb0] bg-[#fff7eb] p-5">
-                  <p className="text-sm font-medium text-[#5a4733]">为什么要这些权限？为了让桌宠更懂你的学习状态，而不是“乱提醒”。</p>
+                <div className={`space-y-2 rounded-2xl border border-dashed border-white/70 bg-[linear-gradient(130deg,rgba(255,249,236,0.9),rgba(242,252,255,0.9),rgba(255,239,245,0.86))] p-5 ${moodTheme.cardGlow}`}>
+                  <p className="text-sm font-medium text-gradient-primary">为什么要这些权限？为了让桌宠更懂你，不做“瞎催型闹钟”。</p>
                   {(Object.keys(permissions) as Array<keyof typeof permissions>).map((key) => (
-                    <label key={key} className="flex cursor-pointer items-start gap-3 rounded-lg px-1 py-1 text-sm text-[#4d3929]">
+                    <label key={key} className="flex cursor-pointer items-start gap-3 rounded-xl border border-white/60 bg-white/60 px-3 py-2 text-sm text-[#4d3929] backdrop-blur">
                       <input
                         type="checkbox"
                         checked={permissions[key]}
@@ -500,88 +577,57 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
                       />
                       <span>
                         <span className="block font-medium">{permissionLabels[key]}</span>
-                        <span className="block text-xs text-[#7a6755]">{permissionHints[key]}</span>
+                        <span className="block text-xs text-gradient-milestone">{permissionHints[key]}</span>
                       </span>
                     </label>
                   ))}
-                </div>
-
-                <div className="rounded-2xl border border-[#eadfce] bg-[#fffaf4] p-4">
-                  <div className="mb-3 flex items-center justify-between text-sm text-[#5a4733]">
-                    <span className="font-medium">连接体检进度</span>
-                    <span>{Math.round(setupProgress)}%</span>
-                  </div>
-                  <Progress value={setupProgress} className="h-2 [&>div]:bg-[#cd7a2f]" />
-                  <p className="mt-2 text-xs text-[#7a6755]">
-                    {setupRunning ? loadingComfortLines[loadingLineIndex] : setupReady ? "环境准备完成，可以继续完善学习画像。" : "首次进入会自动体检，失败可点击“重新体检”。"}
-                  </p>
-                  <div className="mt-3 grid gap-2">
-                    {setupTasks.map((task) => (
-                      <div key={task.id} className="flex items-start gap-3 rounded-xl border border-[#eadfce] bg-white px-3 py-2">
-                        <div className="mt-0.5 h-4 w-4"><TaskIcon status={task.status} /></div>
-                        <div>
-                          <p className="text-sm font-medium text-[#3f2d1f]">{task.label}</p>
-                          <p className="text-xs text-[#7a6755]">{task.detail}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {setupError && <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{setupError}</div>}
-
-                <div className="flex flex-wrap gap-3">
-                  <Button onClick={() => runSetup()} disabled={setupRunning} className={`min-w-44 text-white transition-colors duration-500 ${moodTheme.accent}`}>
-                    {setupRunning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PawPrint className="mr-2 h-4 w-4" />}重新体检
-                  </Button>
                 </div>
               </div>
             )}
 
             {step === 1 && (
               <div className="space-y-5">
-                <div className="rounded-2xl border border-[#eadfce] bg-[#fffaf4] p-4 text-sm text-[#6a5644]">
-                  这些信息会用于生成你的学习画像：桌宠会基于你的作息、课程压力和高频痛点来调整提醒时机与语气。
+                <div className={`rounded-2xl border border-white/70 bg-[linear-gradient(120deg,rgba(255,255,255,0.9),rgba(238,248,255,0.87),rgba(255,245,231,0.86))] p-4 text-sm text-[#6a5644] ${moodTheme.cardGlow}`}>
+                  这些信息会变成你的情报档案：桌宠会按你的作息、课程压力和焦虑点来调节提醒节奏与语气。
                 </div>
-                <div className="rounded-2xl border border-[#eadfce] bg-[#fffaf4] p-5">
-                  <p className="mb-3 flex items-center gap-2 text-2xl font-semibold text-[#3f2d1f]"><BookOpen className="h-5 w-5 text-[#d17a2a]" />你的主修功法（专业）</p>
-                  <div className="relative">
-                    <select
-                      value={profile.role}
-                      onChange={(e) => setProfile((prev) => ({ ...prev, role: e.target.value }))}
-                      className="w-full appearance-none rounded-full border border-[#e4d4c0] bg-white px-4 py-2.5 text-lg text-[#4d3929]"
-                    >
-                      {presetMajors.map((major) => (
-                        <option key={major} value={major}>{major}</option>
-                      ))}
-                    </select>
-                    <ChevronDown className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7a6755]" />
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-[#eadfce] bg-[#fffaf4] p-5">
-                  <p className="mb-3 flex items-center gap-2 text-2xl font-semibold text-[#3f2d1f]"><AlarmClock className="h-5 w-5 text-[#d17a2a]" />最近的渡劫日（下个重要 DDL）</p>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      ref={dateInputRef}
-                      type="date"
-                      value={deadlineDate}
-                      onChange={(e) => setDeadlineDate(e.target.value)}
-                      className="rounded-full border-[#e4d4c0] text-[#4d3929]"
-                    />
+                <div className={`rounded-2xl border border-white/70 bg-[linear-gradient(130deg,rgba(255,255,255,0.92),rgba(255,244,226,0.86),rgba(238,251,255,0.86))] p-5 ${moodTheme.cardGlow}`}>
+                  <p className="mb-3 flex items-center gap-2 text-2xl font-semibold text-gradient-warm text-shadow-soft"><BookOpen className="h-5 w-5 animate-text-shimmer" />你的主修功法（专业）</p>
+                  <div ref={majorMenuRef} className="relative overflow-visible rounded-2xl border border-white/80 bg-gradient-to-r from-white/95 via-[#fff3dd]/90 to-[#eaf7ff]/90 p-1.5">
+                    <span className="pointer-events-none absolute left-4 top-1.5 text-[10px] tracking-widest text-gradient-milestone font-semibold uppercase">MAJOR PATH</span>
                     <button
                       type="button"
-                      onClick={quickPickDeadline}
-                      className="rounded-full border border-[#e4d4c0] bg-white p-2.5 text-[#d17a2a] hover:bg-[#fff3e3]"
-                      title="选择日期"
+                      onClick={() => setIsMajorMenuOpen((prev) => !prev)}
+                      className="w-full rounded-xl border border-[#eddcc7] bg-white/90 px-4 pb-2.5 pt-6 text-left text-lg text-[#4d3929] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.8)]"
                     >
-                      <CalendarDays className="h-4 w-4" />
+                      {presetMajors.find((major) => major.value === profile.role)?.label ?? presetMajors[0].label}
                     </button>
+                    <ChevronDown className={`pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-gradient-milestone transition-transform ${isMajorMenuOpen ? "rotate-180" : "rotate-0"}`} />
+                    {isMajorMenuOpen && (
+                      <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-30 rounded-2xl border border-white/80 bg-[linear-gradient(160deg,rgba(255,251,245,0.98),rgba(255,245,235,0.96),rgba(240,249,255,0.95))] p-2 shadow-[0_20px_40px_-24px_rgba(120,86,45,0.55)] backdrop-blur">
+                        {presetMajors.map((major) => {
+                          const active = profile.role === major.value
+                          return (
+                            <button
+                              key={major.value}
+                              type="button"
+                              onClick={() => {
+                                setProfile((prev) => ({ ...prev, role: major.value }))
+                                setIsMajorMenuOpen(false)
+                              }}
+                              className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-base transition ${active ? "bg-gradient-to-r from-[#ffe8cc] via-[#ffeedd] to-[#eef7ff] text-[#613d1e]" : "text-[#5e4530] hover:bg-white/70"}`}
+                            >
+                              <span>{major.label}</span>
+                              {active && <Check className="h-4 w-4 text-[#c8702a]" />}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-[#eadfce] bg-[#fffaf4] p-5">
-                  <p className="mb-3 flex items-center gap-2 text-2xl font-semibold text-[#3f2d1f]"><MoonStar className="h-5 w-5 text-[#d17a2a]" />作息时间偏好</p>
+                <div className={`rounded-2xl border border-white/70 bg-[linear-gradient(130deg,rgba(255,255,255,0.9),rgba(255,250,236,0.86),rgba(241,247,255,0.84))] p-5 ${moodTheme.cardGlow}`}>
+                  <p className="mb-3 flex items-center gap-2 text-2xl font-semibold text-gradient-warm text-shadow-soft"><MoonStar className="h-5 w-5 animate-text-shimmer" />作息时间偏好</p>
                   <p className="mb-2 text-sm text-[#6a5644]">常见入睡时间：{sleepHour.toString().padStart(2, "0")}:00</p>
                   <input
                     type="range"
@@ -589,17 +635,17 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
                     max={23}
                     value={sleepHour}
                     onChange={(e) => setSleepHour(Number(e.target.value))}
-                    className="h-2 w-full cursor-pointer appearance-none rounded-full bg-gradient-to-r from-[#f4dcb8] to-[#d6c3a8]"
+                    className="pet-slider pet-slider--sleep h-2.5 w-full cursor-pointer appearance-none rounded-full"
                   />
-                  <div className="mt-2 flex justify-between text-xs text-[#7a6755]">
+                  <div className="mt-2 flex justify-between text-xs text-gradient-milestone">
                     <span>23:00 前（养生）</span>
                     <span>03:00+（修仙）</span>
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-[#eadfce] bg-[#fffaf4] p-5">
-                  <p className="mb-3 text-2xl font-semibold text-[#3f2d1f]">破防词汇（多选）</p>
-                  <p className="mb-2 text-sm text-[#7a6755]">选你最容易焦虑的关键词，桌宠会在相关任务中提高提醒频次。</p>
+                <div className={`rounded-2xl border border-white/70 bg-[linear-gradient(130deg,rgba(255,255,255,0.9),rgba(248,252,255,0.88),rgba(255,244,231,0.86))] p-5 ${moodTheme.cardGlow}`}>
+                  <p className="mb-3 text-2xl font-semibold text-gradient-warm text-shadow-soft">破防词汇（多选）</p>
+                  <p className="mb-2 text-sm text-gradient-milestone">选你最容易焦虑的关键词，桌宠会在相关任务中提高提醒频次。</p>
                   <div className="flex flex-wrap gap-2">
                     {breakerVocabulary.map((item) => {
                       const active = selectedBreakers.includes(item)
@@ -608,7 +654,7 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
                           key={item}
                           type="button"
                           onClick={() => toggleBreaker(item)}
-                          className={`rounded-full border px-4 py-1.5 text-sm transition ${active ? "border-[#d17a2a] bg-[#ffe8cc] text-[#7b4a16]" : "border-[#dac7b1] bg-white text-[#6a5644]"}`}
+                          className={`rounded-full border px-4 py-1.5 text-sm transition ${active ? moodTheme.chipActive : moodTheme.chipIdle}`}
                         >
                           [{item}]
                         </button>
@@ -617,9 +663,9 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-[#eadfce] bg-[#fffaf4] p-5">
-                  <p className="mb-3 text-2xl font-semibold text-[#3f2d1f]">课表导入（.ics）</p>
-                  <p className="mb-2 text-sm text-[#7a6755]">导入后可自动识别上课时段，避免在上课时高频打扰。</p>
+                <div className={`rounded-2xl border border-white/70 bg-[linear-gradient(130deg,rgba(255,255,255,0.9),rgba(255,246,232,0.9),rgba(237,249,255,0.82))] p-5 ${moodTheme.cardGlow}`}>
+                  <p className="mb-3 text-2xl font-semibold text-gradient-warm text-shadow-soft">课表导入（.ics）</p>
+                  <p className="mb-2 text-sm text-gradient-milestone">导入后可自动识别上课时段，避免在上课时高频打扰。</p>
                   <label
                     onDragOver={(e) => {
                       e.preventDefault()
@@ -635,7 +681,7 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
                   >
                     <FolderUp className="mx-auto mb-3 h-10 w-10 text-[#b8742f]" />
                     <p className="text-xl font-semibold text-[#4d3929]">拖拽 .ics 课表文件到这里</p>
-                    <p className="mt-2 text-sm text-[#7a6755]">或点击选择文件</p>
+                    <p className="mt-2 text-sm text-gradient-milestone">或点击选择文件</p>
                     <input
                       type="file"
                       accept=".ics"
@@ -643,39 +689,53 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
                       onChange={(e) => pickIcsFile(e.target.files?.[0] ?? null)}
                     />
                   </label>
-                  {icsFileName ? <p className="mt-2 text-sm text-emerald-700">已接收：{icsFileName}</p> : <p className="mt-2 text-sm text-[#7a6755]">可选：没有课表也能继续</p>}
+                  {icsFileName ? <p className="mt-2 text-sm text-emerald-700">已接收：{icsFileName}</p> : <p className="mt-2 text-sm text-gradient-milestone">可选：没有课表也能继续</p>}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIcsFileName("")
+                      try {
+                        window.localStorage.removeItem(SCHEDULE_ICS_NAME_STORAGE_KEY)
+                      } catch {
+                      }
+                    }}
+                    className="mt-3 rounded-full border border-[#e4d4c0] bg-white px-4 py-1.5 text-sm text-gradient-milestone hover:bg-[#fff3e3]"
+                  >
+                    暂不导入，直接继续
+                  </button>
                 </div>
 
-                <div className="rounded-2xl border border-[#eadfce] bg-[#fffaf4] p-5">
-                  <p className="mb-3 text-2xl font-semibold text-[#3f2d1f]">学习压力感知</p>
+                <div className={`rounded-2xl border border-white/70 bg-[linear-gradient(130deg,rgba(255,255,255,0.9),rgba(255,238,239,0.86),rgba(232,245,255,0.84))] p-5 ${moodTheme.cardGlow}`}>
+                  <p className="mb-3 text-2xl font-semibold text-gradient-warm text-shadow-soft">学习压力感知</p>
                   <input
                     type="range"
                     min={0}
                     max={100}
                     value={anxietyLevel}
                     onChange={(e) => setAnxietyLevel(Number(e.target.value))}
-                    className="h-2 w-full cursor-pointer appearance-none rounded-full bg-gradient-to-r from-[#f2b8bd] via-[#f3dfb3] to-[#c5d2f8]"
+                    className="pet-slider pet-slider--anxiety h-2.5 w-full cursor-pointer appearance-none rounded-full"
+                    style={{ backgroundPositionX: `${100 - anxietyLevel}%` }}
                   />
-                  <div className="mt-2 flex justify-between text-sm text-[#7a6755]">
+                  <div className="mt-2 flex justify-between text-sm text-gradient-milestone">
                     <span>心态平稳</span>
-                    <span>快碎了</span>
+                    <span>快碎了 · {anxietyLevel}%</span>
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-[#eadfce] bg-[#fffaf4] p-5">
-                  <p className="mb-2 text-xl font-semibold text-[#3f2d1f]">将写入桌宠的学习节奏画像</p>
-                  <p className="mb-3 text-sm text-[#7a6755]">用于方案 1：让提醒时间更像你的真实学习节奏。</p>
-                  <div className="rounded-xl border border-[#e4d4c0] bg-white p-3 text-sm text-[#5a4733]">
+                <div className={`rounded-2xl border border-white/70 bg-[linear-gradient(140deg,rgba(255,255,255,0.92),rgba(235,252,255,0.88),rgba(240,244,255,0.86))] p-5 ${moodTheme.cardGlow}`}>
+                  <p className="mb-2 text-xl font-semibold text-gradient-primary">专属学习节奏蓝图</p>
+                  <p className="mb-3 text-sm text-gradient-milestone">用于方案 1：让提醒时间更像你的真实学习节奏。</p>
+                  <div className="rounded-xl border border-white/80 bg-white/80 p-3 text-sm text-gradient-primary shadow-[inset_0_0_0_1px_rgba(255,255,255,0.72)]">
                     <p className="font-medium">{learningRhythmInsight.summary}</p>
                     <p className="mt-2">高专注窗口：{learningRhythmInsight.focusWindows.join(" / ")}</p>
                     <p className="mt-1">静默策略：{learningRhythmInsight.quietWindows.join("；")}</p>
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-[#eadfce] bg-[#fffaf4] p-5">
-                  <p className="mb-2 text-xl font-semibold text-[#3f2d1f]">将写入桌宠的压力分层策略</p>
-                  <p className="mb-3 text-sm text-[#7a6755]">用于方案 2：按压力等级切换提醒频率与话术强度。</p>
-                  <div className="space-y-2 rounded-xl border border-[#e4d4c0] bg-white p-3 text-sm text-[#5a4733]">
+                <div className={`rounded-2xl border border-white/70 bg-[linear-gradient(140deg,rgba(255,255,255,0.92),rgba(255,238,248,0.88),rgba(236,244,255,0.86))] p-5 ${moodTheme.cardGlow}`}>
+                  <p className="mb-2 text-xl font-semibold text-gradient-primary">将写入桌宠的压力分层策略</p>
+                  <p className="mb-3 text-sm text-gradient-milestone">用于方案 2：按压力等级切换提醒频率与话术强度。</p>
+                  <div className="space-y-2 rounded-xl border border-white/80 bg-white/80 p-3 text-sm text-gradient-primary shadow-[inset_0_0_0_1px_rgba(255,255,255,0.72)]">
                     <p>压力等级：<span className="font-semibold">{pressurePlanInsight.level}</span></p>
                     <p>提醒间隔（分钟）：{pressurePlanInsight.reminderIntervalsMinutes.join(" / ")}</p>
                     <p>策略：{pressurePlanInsight.strategy}</p>
@@ -687,51 +747,57 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
 
             {step === 2 && (
               <div className="space-y-5">
-                <div className="rounded-2xl border border-[#eadfce] bg-[#fffaf4] p-5">
-                  <p className="mb-3 flex items-center gap-2 text-2xl font-semibold text-[#3f2d1f]"><Cat className="h-5 w-5 text-[#d17a2a]" />嘴替流派（Personality）</p>
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                    {(["阴阳怪气", "抽象发疯", "甜心夹子"] as PersonalityTone[]).map((tone) => (
-                      <button
-                        key={tone}
-                        type="button"
-                        onClick={() => setPersonalityTone(tone)}
-                        className={`rounded-xl border px-3 py-2 text-sm transition ${personalityTone === tone ? "border-[#d17a2a] bg-[#ffe8cc] text-[#7b4a16]" : "border-[#d8c6ae] bg-white text-[#6a5644]"}`}
-                      >
-                        {tone}
-                      </button>
-                    ))}
+                <div className={`rounded-2xl border border-white/70 bg-[linear-gradient(130deg,rgba(255,255,255,0.92),rgba(255,245,230,0.86),rgba(236,248,255,0.84))] p-5 ${moodTheme.cardGlow}`}>
+                  <p className="mb-3 flex items-center gap-2 text-2xl font-semibold text-gradient-warm text-shadow-soft"><Cat className="h-5 w-5 animate-text-shimmer" />嘴替流派（Personality）</p>
+                  <div className={`rounded-2xl border p-3 shadow-[inset_0_0_40px_rgba(255,255,255,0.08)] ${moodTheme.personalityPanel}`}>
+                    <div className="mb-3 flex items-center gap-2 text-sm text-[#5b3f2a]">
+                      <Heart className="h-4 w-4 text-[#ffb38a]" />
+                      选一个说话人格，桌宠会按这个模式碎碎念
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                      {(["阴阳怪气", "抽象发疯", "甜心夹子"] as PersonalityTone[]).map((tone) => (
+                        <button
+                          key={tone}
+                          type="button"
+                          onClick={() => setPersonalityTone(tone)}
+                          className={`pet-chip rounded-xl border px-3 py-2 text-sm transition ${personalityTone === tone ? `pet-chip--active ${moodTheme.chipActive}` : moodTheme.chipIdle}`}
+                        >
+                          {tone}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-[#eadfce] bg-[#fffaf4] p-5">
-                  <p className="mb-3 flex items-center gap-2 text-2xl font-semibold text-[#3f2d1f]"><Gauge className="h-5 w-5 text-[#d17a2a]" />显眼包指数（Activity Level）</p>
+                <div className={`rounded-2xl border border-white/70 bg-[linear-gradient(130deg,rgba(255,255,255,0.92),rgba(255,237,227,0.86),rgba(236,244,255,0.84))] p-5 ${moodTheme.cardGlow}`}>
+                  <p className="mb-3 flex items-center gap-2 text-2xl font-semibold text-gradient-warm text-shadow-soft"><Gauge className="h-5 w-5 animate-text-shimmer" />显眼包指数（Activity Level）</p>
                   <input
                     type="range"
                     min={0}
                     max={100}
                     value={activityLevel}
                     onChange={(e) => setActivityLevel(Number(e.target.value))}
-                    className="h-2 w-full cursor-pointer appearance-none rounded-full bg-gradient-to-r from-[#f5c58a] to-[#de8f3f]"
+                    className="pet-slider pet-slider--energy h-2.5 w-full cursor-pointer appearance-none rounded-full"
                   />
-                  <div className="mt-2 flex justify-between text-sm text-[#7a6755]">
-                    <span>高冷自闭</span>
-                    <span>满屏乱爬</span>
+                  <div className="mt-2 flex justify-between text-sm text-gradient-milestone">
+                    <span>淡定潜水</span>
+                    <span>满屏踩奶</span>
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-[#eadfce] bg-[#fffaf4] p-5">
-                  <p className="mb-1 text-2xl font-semibold text-[#3f2d1f]">桌宠怎么称呼你</p>
-                  <p className="mb-3 text-sm text-[#7a6755]">这是桌宠对你的称呼，不是你的网名。会影响它的对话语气和亲近感。</p>
+                <div className={`rounded-2xl border border-white/70 bg-[linear-gradient(130deg,rgba(255,255,255,0.92),rgba(255,245,229,0.88),rgba(238,249,255,0.82))] p-5 ${moodTheme.cardGlow}`}>
+                  <p className="mb-1 flex items-center gap-2 text-2xl font-semibold text-gradient-warm text-shadow-soft"><Crown className="h-5 w-5 animate-text-shimmer" />认贼作父（Nickname）</p>
+                  <p className="mb-3 text-sm text-gradient-milestone">这是桌宠对你的爱称，不是网名。会直接影响它撒娇和催任务的语气。</p>
                   <div className="mb-3 flex flex-wrap gap-2">
                     {nicknameTags.map((tag) => (
                       <button
-                        key={tag}
-                        type="button"
-                        onClick={() => setNickname(tag)}
-                        className={`rounded-full border px-3 py-1.5 text-sm ${nickname === tag ? "border-[#d17a2a] bg-[#ffe8cc] text-[#7b4a16]" : "border-[#d8c6ae] bg-white text-[#6a5644]"}`}
-                      >
-                        [{tag}]
-                      </button>
+                          key={tag}
+                          type="button"
+                          onClick={() => setNickname(tag)}
+                          className={`rounded-full border px-3 py-1.5 text-sm transition ${nickname === tag ? moodTheme.chipActive : moodTheme.chipIdle}`}
+                        >
+                          [{tag}]
+                        </button>
                     ))}
                   </div>
                   <Input
@@ -740,12 +806,12 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
                       setCustomNickname(e.target.value)
                       setProfile((prev) => ({ ...prev, displayName: e.target.value }))
                     }}
-                    placeholder="或者自定义称呼"
+                    placeholder="或者你起一个专属爱称"
                     className="border-[#dac7b1] bg-white text-[#4d3929]"
                   />
                 </div>
 
-                <label className="flex items-center justify-between rounded-xl border border-[#d8c6ae] bg-[#fffaf4] p-3 text-sm text-[#5a4733]">
+                <label className="flex items-center justify-between rounded-xl border border-[#d8c6ae] bg-[#fffaf4] p-3 text-sm text-gradient-primary">
                   启动后自动连接
                   <input
                     type="checkbox"
@@ -755,7 +821,7 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
                   />
                 </label>
 
-                <label className="flex items-center justify-between rounded-xl border border-[#d8c6ae] bg-[#fffaf4] p-3 text-sm text-[#5a4733]">
+                <label className="flex items-center justify-between rounded-xl border border-[#d8c6ae] bg-[#fffaf4] p-3 text-sm text-gradient-primary">
                   点击桌宠打开控制台
                   <input
                     type="checkbox"
@@ -776,20 +842,17 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
             {step < 2 ? (
               <Button
                 onClick={() => setStep((prev) => Math.min(2, prev + 1))}
-                disabled={setupRunning || (step === 0 && userIdentity !== "student")}
+                disabled={setupRunning || summonInProgress}
                 className={`rounded-full px-6 text-white transition-colors duration-500 ${moodTheme.accent}`}
               >
-                下一步喵~
+                <span className="animate-text-shimmer">下一步喵~</span>
               </Button>
             ) : (
-              <Button onClick={() => setShowCompletionCard(true)} disabled={setupRunning} className="rounded-full bg-[#ff9100] px-6 text-white hover:bg-[#e67f00]">
-                {setupRunning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />}大功告成，召唤桌宠
+              <Button onClick={() => setShowCompletionCard(true)} disabled={setupRunning || summonInProgress} className="rounded-full bg-[#ff9100] px-6 text-white hover:bg-[#e67f00]">
+                {setupRunning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />}<span className="animate-text-shimmer">大功告成，召唤桌宠</span>
               </Button>
             )}
             </div>
-            {step === 0 && userIdentity !== "student" && (
-              <p className="mt-2 text-right text-xs text-[#8a735c]">请先选择“学生（已支持）”后继续。</p>
-            )}
           </div>
         </div>
 
@@ -797,16 +860,28 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
           className={`hidden h-full border-l border-[#eadfce] ${moodTheme.sidePanel} p-8 transition-colors duration-700 ease-out md:block`}
           style={{ backgroundColor: moodTheme.sideTint }}
         >
-          <div className="mb-6 flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-xs text-[#6a5644] backdrop-blur">
-            <Sparkles className="h-3.5 w-3.5" />PetClaw 初始化向导
+          <div className="mb-6 flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-xs text-gradient-primary backdrop-blur">
+            <Sparkles className="h-3.5 w-3.5 animate-text-shimmer" />PetClaw <span className="font-semibold">初始化向导</span>
           </div>
-          <div className="rounded-2xl border border-[#e8dccd] bg-white/90 px-4 py-3 text-sm leading-relaxed text-[#5a4733] shadow-sm">
+          <div className="rounded-2xl border border-[#e8dccd] bg-white/90 px-4 py-3 text-sm leading-relaxed text-gradient-primary shadow-sm">
             {companionFeedback}
           </div>
           <div className="mt-6 rounded-3xl border border-[#e8dccd] bg-white/80 p-6 shadow-sm">
-            <div className="flex h-[20rem] flex-col items-center justify-center rounded-3xl bg-[#fff3e1] text-center">
-              <span className="text-7xl">🐾</span>
-              <p className="mt-4 max-w-xs text-sm text-[#6a5644]">完成三步解锁专属桌宠，学习提醒和情绪陪伴将根据你的节奏自动调节。</p>
+            <div className="mb-3 flex items-center justify-between text-xs text-gradient-milestone">
+              <span className="rounded-full bg-[#fff1e0] px-3 py-1">🐾 桌宠候场区</span>
+              <span>随机轮播</span>
+            </div>
+            <div className="relative overflow-hidden rounded-3xl border border-[#eadfce] bg-[radial-gradient(circle_at_25%_20%,#ffeccd_0%,#ffe4bf_35%,#ffd9ab_100%)] p-4">
+              <div className="pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full bg-white/30 blur-2xl" />
+              <div className="pointer-events-none absolute -bottom-8 -left-8 h-20 w-20 rounded-full bg-[#f8c996]/40 blur-xl" />
+              <div className="relative flex h-[18.5rem] items-center justify-center rounded-2xl bg-white/55">
+                <img
+                  src={showcaseGifs[showcaseIndex]}
+                  alt="桌宠预览"
+                  className="h-full max-h-[16.5rem] w-auto object-contain drop-shadow-[0_14px_18px_rgba(75,43,13,0.2)]"
+                />
+              </div>
+              <p className="mt-3 text-center text-sm text-[#6a5644]">{showcaseLines[showcaseIndex]}</p>
             </div>
           </div>
         </div>
@@ -814,27 +889,67 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
 
       {showCompletionCard && (
         <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/25 p-6">
-          <div className="w-full max-w-2xl rounded-3xl border border-[#e8dccd] bg-[#fffaf4] p-6 shadow-xl">
-            <p className="text-2xl font-semibold text-[#3f2d1f]">你的人设画像已准备好</p>
-            <p className="mt-2 text-sm text-[#7a6755]">这一步完成后，桌宠将按你的学习节奏和压力层级进行提醒。</p>
+          <div className="relative w-full max-w-2xl overflow-hidden rounded-3xl border border-white/80 bg-[linear-gradient(140deg,rgba(255,250,242,0.96),rgba(250,242,255,0.92),rgba(241,249,255,0.9))] p-6 shadow-[0_26px_70px_-35px_rgba(94,56,22,0.6)]">
+            <div className="pointer-events-none absolute -right-12 -top-16 h-40 w-40 rounded-full bg-[#ffccad]/40 blur-3xl" />
+            <div className="pointer-events-none absolute -bottom-14 -left-10 h-36 w-36 rounded-full bg-[#b9d8ff]/35 blur-3xl" />
+            {summonInProgress ? (
+              <>
+                <p className="text-2xl font-semibold text-gradient-warm text-shadow-warm">正在召唤桌宠</p>
+                <p className="mt-2 text-sm text-gradient-milestone">自动配置进行中，正在和进度条一起同步推进喵。</p>
 
-            <div className="mt-4 grid gap-3 rounded-2xl border border-[#eadfce] bg-white p-4 text-sm text-[#5a4733]">
-              <p><span className="font-medium">学习节奏：</span>{learningRhythmInsight.summary}</p>
-              <p><span className="font-medium">高专注窗口：</span>{learningRhythmInsight.focusWindows.join(" / ")}</p>
-              <p><span className="font-medium">压力等级：</span>{pressurePlanInsight.level}（{pressurePlanInsight.strategy}）</p>
-              <p><span className="font-medium">提醒间隔：</span>{pressurePlanInsight.reminderIntervalsMinutes.join(" / ")} 分钟</p>
-            </div>
+                <div className="relative mt-4 flex h-44 items-center justify-center overflow-hidden rounded-2xl border border-[#eadfce] bg-[radial-gradient(circle_at_30%_25%,#ffe9cc_0%,#fff7eb_40%,#fffdf8_100%)]">
+                  <div className="absolute h-28 w-28 rounded-full bg-[#f8c589]/55 blur-2xl" />
+                  <div className="absolute h-36 w-36 rounded-full border-4 border-[#f5dbbf] border-t-[#d17a2a] animate-spin" />
+                  <div className="absolute h-24 w-24 rounded-full border-4 border-[#fde7cf] border-b-[#b8641d] animate-[spin_1400ms_linear_infinite]" />
+                  <PawPrint className="relative h-12 w-12 text-[#a85b1c] drop-shadow" />
+                </div>
 
-            <div className="mt-4 rounded-2xl border border-dashed border-[#e4d4c0] bg-[#fff6eb] p-4">
-              <p className="text-sm font-medium text-[#5a4733]">首条提醒预览</p>
-              <p className="mt-1 text-sm text-[#6a5644]">{previewReminderText || "点击“试试第一条提醒”预览桌宠语气。"}</p>
-            </div>
+                <div className="mt-4 rounded-2xl border border-[#eadfce] bg-white p-4">
+                  <div className="mb-3 flex items-center justify-between text-sm text-gradient-primary">
+                    <span className="font-medium">自动配置进度</span>
+                    <span>{Math.round(displayProgress)}%</span>
+                  </div>
+                  <Progress value={displayProgress} className="h-2 [&>div]:bg-[#cd7a2f]" />
+                  <p className="mt-2 text-xs text-gradient-milestone">{loadingComfortLines[loadingLineIndex]}</p>
+                  <div className="mt-3 grid gap-2">
+                    {setupTasks.map((task) => (
+                      <div key={task.id} className="flex items-start gap-3 rounded-xl border border-[#eadfce] bg-white px-3 py-2">
+                        <div className="mt-0.5 h-4 w-4"><TaskIcon status={task.status} /></div>
+                        <div>
+                          <p className="text-sm font-medium text-[#3f2d1f]">{task.label}</p>
+                          <p className="text-xs text-gradient-milestone">{task.detail}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
 
-            <div className="mt-5 flex flex-wrap justify-end gap-2">
-              <Button variant="outline" onClick={() => setShowCompletionCard(false)} className="border-[#e4d4c0] text-[#5a4733]">再看一下</Button>
-              <Button variant="outline" onClick={previewReminder} className="border-[#e4d4c0] text-[#5a4733]">试试第一条提醒</Button>
-              <Button onClick={complete} className="bg-[#ff9100] text-white hover:bg-[#e67f00]">确认并召唤桌宠</Button>
-            </div>
+                {setupError && <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{setupError}</div>}
+              </>
+            ) : (
+              <>
+                <p className="text-2xl font-semibold text-gradient-warm text-shadow-warm animate-text-shimmer">你的人设画像已准备好</p>
+                <p className="mt-2 text-sm text-gradient-milestone">确认后会先看一段召唤动画，再自动完成环境检查和桌宠通信配置。</p>
+
+                <div className="mt-4 grid gap-3 rounded-2xl border border-white/80 bg-white/78 p-4 text-sm text-gradient-primary backdrop-blur">
+                  <p><span className="font-medium text-gradient-warm">学习节奏：</span>{learningRhythmInsight.summary}</p>
+                  <p><span className="font-medium text-gradient-warm">高专注窗口：</span>{learningRhythmInsight.focusWindows.join(" / ")}</p>
+                  <p><span className="font-medium text-gradient-warm">压力等级：</span>{pressurePlanInsight.level}（{pressurePlanInsight.strategy}）</p>
+                  <p><span className="font-medium text-gradient-warm">提醒间隔：</span>{pressurePlanInsight.reminderIntervalsMinutes.join(" / ")} 分钟</p>
+                </div>
+
+                <div className="mt-4 rounded-2xl border border-dashed border-[#e4d4c0] bg-[linear-gradient(130deg,rgba(255,245,230,0.85),rgba(255,236,248,0.78),rgba(234,245,255,0.78))] p-4">
+                  <p className="text-sm font-medium text-gradient-primary">首条提醒预览</p>
+                  <p className="mt-1 text-sm text-[#6a5644]">{previewReminderText || "点击“试试第一条提醒”预览桌宠语气。"}</p>
+                </div>
+
+                <div className="mt-5 flex flex-wrap justify-end gap-2">
+                  <Button variant="outline" onClick={() => setShowCompletionCard(false)} className="border-[#e4d4c0] text-gradient-primary">再看一下</Button>
+                  <Button variant="outline" onClick={previewReminder} className="border-[#e4d4c0] text-gradient-primary">试试第一条提醒</Button>
+                  <Button onClick={complete} className="bg-[#ff9100] text-white hover:bg-[#e67f00]"><span className="animate-text-shimmer">确认并召唤桌宠</span></Button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

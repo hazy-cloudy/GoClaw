@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/pet/compression"
 )
 
 // ConfigLoader 配置加载器
@@ -66,6 +67,13 @@ func (l *ConfigLoader) Load() error {
 	}
 	if cfg.App == nil {
 		cfg.App = DefaultAppConfig()
+	}
+	// 确保 memory 和 compression 配置存在，使用默认值
+	if cfg.Memory == nil {
+		cfg.Memory = DefaultMemoryConfig()
+	}
+	if cfg.Compression == nil {
+		cfg.Compression = DefaultCompressionConfig()
 	}
 
 	l.config = &cfg
@@ -141,6 +149,24 @@ func (l *ConfigLoader) GetApp() *AppConfig {
 		return DefaultAppConfig()
 	}
 	cfg := *l.config.App
+	return &cfg
+}
+
+// GetMemory 获取记忆配置
+func (l *ConfigLoader) GetMemory() *MemoryConfig {
+	if l.config == nil || l.config.Memory == nil {
+		return DefaultMemoryConfig()
+	}
+	cfg := *l.config.Memory
+	return &cfg
+}
+
+// GetCompression 获取压缩配置
+func (l *ConfigLoader) GetCompression() *compression.CompressionConfig {
+	if l.config == nil || l.config.Compression == nil {
+		return compression.DefaultCompressionConfig()
+	}
+	cfg := *l.config.Compression
 	return &cfg
 }
 

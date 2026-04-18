@@ -28,6 +28,13 @@ const (
 	ActionConfigUpdate     = "config_update"     // 更新应用配置
 	ActionEmotionGet       = "emotion_get"       // 获取情绪状态
 	ActionHealthCheck      = "health_check"      // 健康检查
+	ActionMemorySearch     = "memory_search"     // 搜索记忆
+	ActionConversationList = "conversation_list" // 对话列表
+	ActionModelListGet     = "model_list_get"    // 获取模型列表
+	ActionModelAdd         = "model_add"         // 添加模型
+	ActionModelUpdate      = "model_update"      // 更新模型
+	ActionModelDelete      = "model_delete"      // 删除模型
+	ActionModelSetDefault  = "model_set_default" // 设置默认模型
 )
 
 // =============================================================================
@@ -126,6 +133,55 @@ type ConfigUpdateRequest struct {
 // EmotionGetRequest 情绪获取请求数据
 type EmotionGetRequest struct {
 	PetID string `json:"pet_id"` // 桌宠ID
+}
+
+// MemorySearchRequest 搜索记忆请求
+type MemorySearchRequest struct {
+	CharacterID string `json:"character_id"`         // 角色ID，必填
+	Keyword     string `json:"keyword,omitempty"`    // 关键词搜索
+	Type        string `json:"type,omitempty"`       // 记忆类型过滤
+	MinWeight   int    `json:"min_weight,omitempty"` // 最低权重
+	Limit       int    `json:"limit,omitempty"`      // 返回条数限制
+	Offset      int    `json:"offset,omitempty"`     // 翻页偏移
+}
+
+// MemoryItem 记忆条目（用于响应）
+type MemoryItem struct {
+	ID        int64  `json:"id"`         // 记忆ID
+	Type      string `json:"type"`       // 记忆类型
+	Weight    int    `json:"weight"`     // 权重 0-100
+	Content   string `json:"content"`    // 记忆内容
+	CreatedAt string `json:"created_at"` // 创建时间
+}
+
+// MemorySearchResponse 搜索记忆响应
+type MemorySearchResponse struct {
+	Memories []MemoryItem `json:"memories"` // 记忆列表
+	Total    int          `json:"total"`    // 总数量
+	HasMore  bool         `json:"has_more"` // 是否有更多
+}
+
+// ConversationListRequest 对话列表请求
+type ConversationListRequest struct {
+	CharacterID string `json:"character_id"`     // 角色ID，必填
+	Limit       int    `json:"limit,omitempty"`  // 返回条数限制
+	Offset      int    `json:"offset,omitempty"` // 翻页偏移
+}
+
+// ConversationItem 对话条目（用于响应）
+type ConversationItem struct {
+	ID         int64  `json:"id"`         // 对话ID
+	Role       string `json:"role"`       // 角色：user/pet
+	Content    string `json:"content"`    // 对话内容
+	Timestamp  string `json:"timestamp"`  // 对话时间
+	Compressed bool   `json:"compressed"` // 是否已压缩
+}
+
+// ConversationListResponse 对话列表响应
+type ConversationListResponse struct {
+	Conversations []ConversationItem `json:"conversations"` // 对话列表
+	Total         int                `json:"total"`         // 总数量
+	HasMore       bool               `json:"has_more"`      // 是否有更多
 }
 
 // =============================================================================

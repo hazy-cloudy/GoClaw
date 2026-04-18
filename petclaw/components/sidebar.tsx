@@ -1,14 +1,14 @@
 "use client"
 
-import { useState, type CSSProperties } from "react"
+import { useEffect, useRef, useState, type CSSProperties } from "react"
 import { 
-  Plus, MessageSquare, Layers, Clock, Radio, CreditCard, Tag, User, Settings, Moon, Sun, Home,
-  Wrench, FileText, Cpu, AlertCircle, Sparkles
+  Plus, MessageSquare, Layers, Clock, Tag, User, Settings, Moon, Sun, Home,
+  Cpu, AlertCircle, Sparkles, FolderUp
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useGatewayStatus } from "@/hooks/use-picoclaw"
-import { openOnboardingPopup } from "@/lib/onboarding"
+import { openOnboardingPopup, SCHEDULE_ICS_NAME_STORAGE_KEY } from "@/lib/onboarding"
 
 interface SidebarProps {
   activeNav: string
@@ -19,16 +19,25 @@ const navItems = [
   { icon: MessageSquare, label: "聊天" },
   { icon: Layers, label: "技能" },
   { icon: Clock, label: "定时任务" },
-  { icon: Radio, label: "频道" },
-  { icon: Wrench, label: "工具" },
   { icon: Settings, label: "配置" },
-  { icon: FileText, label: "日志" },
-  { icon: CreditCard, label: "价格" },
 ]
 
 export function Sidebar({ activeNav, setActiveNav }: SidebarProps) {
   const [isDarkMode, setIsDarkMode] = useState(false)
+  const [scheduleFileName, setScheduleFileName] = useState("")
+  const [scheduleImportHint, setScheduleImportHint] = useState("")
   const { data: gatewayStatus } = useGatewayStatus()
+  const scheduleFileInputRef = useRef<HTMLInputElement | null>(null)
+
+  useEffect(() => {
+    try {
+      const savedName = window.localStorage.getItem(SCHEDULE_ICS_NAME_STORAGE_KEY)
+      if (savedName) {
+        setScheduleFileName(savedName)
+      }
+    } catch {
+    }
+  }, [])
 
   const toggleTheme = () => {
     setIsDarkMode(!isDarkMode)
@@ -54,6 +63,21 @@ export function Sidebar({ activeNav, setActiveNav }: SidebarProps) {
       case "restarting": return "重启中"
       case "stopping": return "停止中"
       default: return "已停止"
+    }
+  }
+
+  const handleScheduleFilePick = (file: File | null) => {
+    if (!file) return
+    if (!file.name.toLowerCase().endsWith(".ics")) {
+      setScheduleImportHint("只支持 .ics 课表文件")
+      return
+    }
+
+    setScheduleImportHint("已导入，可在初始化中继续使用")
+    setScheduleFileName(file.name)
+    try {
+      window.localStorage.setItem(SCHEDULE_ICS_NAME_STORAGE_KEY, file.name)
+    } catch {
     }
   }
 
@@ -120,6 +144,29 @@ export function Sidebar({ activeNav, setActiveNav }: SidebarProps) {
           <Sparkles className="w-4 h-4" />
           <span>重新初始化</span>
         </Button>
+      </div>
+
+      <div className="px-3 mb-3">
+        <Button
+          variant="outline"
+          className="w-full justify-center gap-2 h-9 bg-background/90 hover:bg-accent border-border/80"
+          onClick={() => scheduleFileInputRef.current?.click()}
+        >
+          <FolderUp className="w-4 h-4" />
+          <span>导入课表</span>
+        </Button>
+        <input
+          ref={scheduleFileInputRef}
+          type="file"
+          accept=".ics"
+          className="hidden"
+          onChange={(event) => handleScheduleFilePick(event.target.files?.[0] ?? null)}
+        />
+        {scheduleImportHint ? (
+          <p className="mt-1 px-1 text-xs text-muted-foreground">{scheduleImportHint}</p>
+        ) : scheduleFileName ? (
+          <p className="mt-1 px-1 text-xs text-muted-foreground">已导入：{scheduleFileName}</p>
+        ) : null}
       </div>
 
       {/* Navigation */}

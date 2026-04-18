@@ -1,4 +1,5 @@
 export const ONBOARDING_STORAGE_KEY = 'petclaw.onboarding.v1'
+export const SCHEDULE_ICS_NAME_STORAGE_KEY = 'petclaw.scheduleIcsFileName'
 
 export interface OnboardingProfile {
   displayName: string

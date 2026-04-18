@@ -1,7 +1,7 @@
 # Pet Channel API 接口文档
 
-> 版本：v2.1  
-> 日期：2026-04-14  
+> 版本：v2.3  
+> 日期：2026-04-16  
 > 协议：WebSocket + JSON
 
 ---
@@ -714,6 +714,404 @@ audio.play();
 
 ---
 
+### 4.10 memory_search - 搜索记忆
+
+搜索桌宠的记忆列表，支持按关键词、类型、权重过滤。
+
+**请求**：
+
+```json
+{
+  "action": "memory_search",
+  "data": {
+    "character_id": "pet_001",
+    "keyword": "喜欢",
+    "type": "preference",
+    "min_weight": 60,
+    "limit": 20,
+    "offset": 0
+  }
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "memory_search",
+  "data": {
+    "memories": [
+      {
+        "id": 1,
+        "type": "preference",
+        "weight": 75,
+        "content": "用户喜欢听古典音乐",
+        "created_at": "2024-01-15T10:30:00Z"
+      }
+    ],
+    "total": 15,
+    "has_more": true
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| character_id | string | 是 | 角色ID |
+| keyword | string | 否 | 关键词搜索（不区分大小写） |
+| type | string | 否 | 记忆类型：`conversation`(对话) / `preference`(偏好) / `fact`(事实) |
+| min_weight | int | 否 | 最低权重过滤（0-100） |
+| limit | int | 否 | 返回条数限制，默认 20 |
+| offset | int | 否 | 翻页偏移，默认 0 |
+
+**响应字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| memories | array | 记忆列表，按权重从高到低排序 |
+| memories[].id | int | 记忆ID |
+| memories[].type | string | 记忆类型 |
+| memories[].weight | int | 权重 0-100 |
+| memories[].content | string | 记忆内容摘要 |
+| memories[].created_at | string | 创建时间（ISO 8601） |
+| total | int | 符合条件的总数量 |
+| has_more | bool | 是否有更多数据 |
+
+---
+
+### 4.11 conversation_list - 对话历史
+
+获取指定角色的对话历史记录。
+
+**请求**：
+
+```json
+{
+  "action": "conversation_list",
+  "data": {
+    "character_id": "pet_001",
+    "limit": 50,
+    "offset": 0
+  }
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "conversation_list",
+  "data": {
+    "conversations": [
+      {
+        "id": 1,
+        "role": "user",
+        "content": "你好呀",
+        "timestamp": "2024-01-15T10:30:00Z",
+        "compressed": false
+      },
+      {
+        "id": 2,
+        "role": "pet",
+        "content": "你好！今天心情怎么样？",
+        "timestamp": "2024-01-15T10:30:05Z",
+        "compressed": false
+      }
+    ],
+    "total": 100,
+    "has_more": true
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| character_id | string | 是 | 角色ID |
+| limit | int | 否 | 返回条数限制，默认 50 |
+| offset | int | 否 | 翻页偏移，默认 0 |
+
+**响应字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| conversations | array | 对话列表，按时间倒序（新的在前） |
+| conversations[].id | int | 对话ID |
+| conversations[].role | string | 角色：`user`(用户) / `pet`(宠物) |
+| conversations[].content | string | 对话内容 |
+| conversations[].timestamp | string | 对话时间（ISO 8601） |
+| conversations[].compressed | bool | 是否已压缩（已压缩的对话会被合并为记忆） |
+| total | int | 对话总数量（含已压缩） |
+| has_more | bool | 是否有更多数据 |
+
+---
+
+### 4.12 model_list_get - 获取模型列表
+
+获取 picoclaw 配置的所有模型列表。API Key 已掩码显示。
+
+**请求**：
+
+```json
+{
+  "action": "model_list_get",
+  "data": {}
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "model_list_get",
+  "data": {
+    "models": [
+      {
+        "index": 0,
+        "model_name": "gpt-4",
+        "model": "openai/gpt-4",
+        "api_base": "https://api.openai.com/v1",
+        "api_key": "sk-****abcd",
+        "proxy": "",
+        "auth_method": "",
+        "connect_mode": "",
+        "workspace": "",
+        "rpm": 60,
+        "max_tokens_field": "",
+        "request_timeout": 120,
+        "thinking_level": "off",
+        "extra_body": {},
+        "enabled": true,
+        "is_default": true,
+        "is_virtual": false
+      }
+    ],
+    "total": 1,
+    "default_model": "gpt-4"
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| models | array | 模型列表 |
+| models[].index | int | 模型索引（用于定位更新/删除） |
+| models[].model_name | string | 模型别名/名称 |
+| models[].model | string | 模型标识（如 `openai/gpt-4`） |
+| models[].api_base | string | API 端点地址 |
+| models[].api_key | string | API Key（掩码显示） |
+| models[].proxy | string | 代理地址 |
+| models[].auth_method | string | 认证方式 |
+| models[].connect_mode | string | 连接模式（stdio/grpc） |
+| models[].workspace | string | 工作区路径 |
+| models[].rpm | int | 每分钟请求限制 |
+| models[].max_tokens_field | string | max_tokens 字段名 |
+| models[].request_timeout | int | 请求超时（秒） |
+| models[].thinking_level | string | 思考级别（off/low/medium/high/xhigh/adaptive） |
+| models[].extra_body | object | 额外的请求体字段 |
+| models[].enabled | bool | 是否启用 |
+| models[].is_default | bool | 是否为默认模型 |
+| models[].is_virtual | bool | 是否为虚拟模型（多 key 展开生成） |
+| total | int | 模型总数 |
+| default_model | string | 当前默认模型名称 |
+
+**API Key 掩码规则**：
+
+| 原始 Key 长度 | 掩码示例 |
+|---------------|----------|
+| ≤8 字符 | `****` |
+| 9-12 字符 | `sk-****89` |
+| >12 字符 | `sk-****abcd` |
+
+---
+
+### 4.13 model_add - 添加模型
+
+添加新的模型配置到 picoclaw。
+
+**请求**：
+
+```json
+{
+  "action": "model_add",
+  "data": {
+    "model_name": "my-gpt",
+    "model": "openai/gpt-4o-mini",
+    "api_key": "sk-xxxxx",
+    "api_base": "https://api.openai.com/v1",
+    "proxy": "",
+    "auth_method": "bearer",
+    "rpm": 60
+  }
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "model_add",
+  "data": {
+    "status": "ok"
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| model_name | string | 是 | 模型别名（唯一标识） |
+| model | string | 是 | 模型标识（如 `openai/gpt-4o-mini`） |
+| api_key | string | 否 | API Key |
+| api_base | string | 否 | API 端点地址 |
+| proxy | string | 否 | 代理地址 |
+| auth_method | string | 否 | 认证方式 |
+| connect_mode | string | 否 | 连接模式（stdio/grpc） |
+| workspace | string | 否 | 工作区路径（CLI 模式用） |
+| rpm | int | 否 | 每分钟请求限制 |
+| max_tokens_field | string | 否 | max_tokens 字段名 |
+| request_timeout | int | 否 | 请求超时（秒） |
+| thinking_level | string | 否 | 思考级别 |
+| extra_body | object | 否 | 额外的请求体字段 |
+
+---
+
+### 4.14 model_update - 更新模型
+
+更新指定模型的配置。按 `model_name` 定位模型。
+
+**请求**：
+
+```json
+{
+  "action": "model_update",
+  "data": {
+    "model_name": "my-gpt",
+    "new_model": "openai/gpt-4o",
+    "api_base": "https://api.openai.com/v1",
+    "rpm": 100
+  }
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "model_update",
+  "data": {
+    "status": "ok"
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| model_name | string | 是 | 要更新的模型名称 |
+| new_model | string | 否 | 新的模型标识 |
+| api_key | string | 否 | 新的 API Key（不传则保留原值） |
+| api_base | string | 否 | 新的 API 端点 |
+| proxy | string | 否 | 新的代理地址 |
+| auth_method | string | 否 | 新的认证方式 |
+| connect_mode | string | 否 | 新的连接模式 |
+| workspace | string | 否 | 新的工作区路径 |
+| rpm | int | 否 | 新的 RPM 限制 |
+| max_tokens_field | string | 否 | 新的 max_tokens 字段名 |
+| request_timeout | int | 否 | 新的请求超时 |
+| thinking_level | string | 否 | 新的思考级别 |
+| extra_body | object | 否 | 新的额外请求体字段 |
+
+**注意**：`api_key` 为空字符串时不更新密钥，为 `null` 时清除密钥。
+
+---
+
+### 4.15 model_delete - 删除模型
+
+删除指定的模型配置。
+
+**请求**：
+
+```json
+{
+  "action": "model_delete",
+  "data": {
+    "model_name": "my-gpt"
+  }
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "model_delete",
+  "data": {
+    "status": "ok"
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| model_name | string | 是 | 要删除的模型名称 |
+
+**注意**：如果删除的是默认模型，会自动清除默认设置。
+
+---
+
+### 4.16 model_set_default - 设置默认模型
+
+设置默认使用的模型。
+
+**请求**：
+
+```json
+{
+  "action": "model_set_default",
+  "data": {
+    "model_name": "my-gpt"
+  }
+}
+```
+
+**响应**：
+
+```json
+{
+  "status": "ok",
+  "action": "model_set_default",
+  "data": {
+    "status": "ok"
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| model_name | string | 是 | 要设为默认的模型名称 |
+
+**注意**：虚拟模型（多 key 展开生成）不能设为默认。
+
+---
+
 ## 五、错误码
 
 ### 5.1 WebSocket 错误 (status: error)
@@ -724,8 +1122,14 @@ audio.play();
 | `invalid onboarding config data` | 无效的配置数据 | 配置数据格式错误 |
 | `invalid character data` | 无效的角色数据 | 角色数据格式错误 |
 | `invalid config data` | 无效的配置数据 | 应用配置数据格式错误 |
+| `invalid request data` | 无效的请求数据 | 请求数据 JSON 格式错误 |
 | `unknown action: xxx` | 未知操作 | 发送了未定义的 action |
 | `character store not available` | 角色存储不可用 | 服务未正确初始化 |
+| `model config manager not available` | 模型配置不可用 | 服务未正确初始化 |
+| `model_name is required` | 模型名称必填 | 缺少 model_name 字段 |
+| `model is required` | 模型标识必填 | 添加模型时缺少 model 字段 |
+| `model not found` | 模型不存在 | 要更新/删除/设置的模型不存在 |
+| `cannot set virtual model as default` | 不能设虚拟模型为默认 | 虚拟模型由多 key 展开生成，不能设为默认 |
 
 ### 5.2 错误响应示例
 
@@ -890,6 +1294,13 @@ async def send_chat(ws, text):
 | config_update | 更新应用配置 | 修改应用设置 |
 | emotion_get | 获取情绪状态 | 查看当前情绪 |
 | health_check | 健康检查 | 检测连接状态 |
+| memory_search | 搜索记忆 | 搜索记忆列表（支持关键词、类型、权重过滤） |
+| conversation_list | 对话历史 | 获取对话历史记录 |
+| model_list_get | 获取模型列表 | 查看所有已配置的模型 |
+| model_add | 添加模型 | 新增模型配置 |
+| model_update | 更新模型 | 修改已有模型配置 |
+| model_delete | 删除模型 | 删除模型配置 |
+| model_set_default | 设置默认模型 | 将某模型设为默认 |
 
 ### 7.2 push_type 快速索引
 

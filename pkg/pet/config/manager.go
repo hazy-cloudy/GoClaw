@@ -1,7 +1,10 @@
 package config
 
 import (
+	"fmt"
+
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/pet/compression"
 	"sync"
 )
 
@@ -16,6 +19,8 @@ type Manager struct {
 	appConfig              *AppConfig
 	activeID               string
 	characterPrivateConfig *CharacterPrivateConfig
+	memoryConfig           *MemoryConfig
+	compressionConfig      *compression.CompressionConfig
 }
 
 func NewManager(managerPath string) *Manager {
@@ -40,6 +45,8 @@ func NewManager(managerPath string) *Manager {
 		appConfig:              configLoader.GetApp(),
 		activeID:               configLoader.GetActiveID(),
 		characterPrivateConfig: characterPrivateConfig,
+		memoryConfig:           configLoader.GetMemory(),
+		compressionConfig:      configLoader.GetCompression(),
 	}
 }
 
@@ -48,16 +55,25 @@ func (m *Manager) Save() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// 2. 构建 PetConfig
+	fmt.Println("pet config: Manager.Save() called")
+
+	// 构建完整 PetConfig（包含 memory 和 compression 配置）
 	petCfg := &PetConfig{
-		Characters: m.characters,
-		ActiveID:   m.activeID,
-		Voice:      m.voiceConfig,
-		App:        m.appConfig,
+		Characters:  m.characters,
+		ActiveID:    m.activeID,
+		Voice:       m.voiceConfig,
+		App:         m.appConfig,
+		Memory:      m.memoryConfig,
+		Compression: m.compressionConfig,
 	}
 
-	// 3. 保存公开配置
-	return m.configLoader.SavePetConfig(petCfg)
+	err := m.configLoader.SavePetConfig(petCfg)
+	if err != nil {
+		fmt.Printf("pet config: Manager.Save() failed: %v\n", err)
+	} else {
+		fmt.Println("pet config: Manager.Save() success")
+	}
+	return err
 }
 
 // GetCharacterByID 根据ID获取角色配置
@@ -110,6 +126,20 @@ func (m *Manager) GetCharacterPrivateConfig() *CharacterPrivateConfig {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.characterPrivateConfig
+}
+
+// GetMemory 获取记忆配置
+func (m *Manager) GetMemory() *MemoryConfig {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.memoryConfig
+}
+
+// GetCompression 获取压缩配置
+func (m *Manager) GetCompression() *compression.CompressionConfig {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.compressionConfig
 }
 
 // GetManagerPath 获取配置管理器的工作空间路径

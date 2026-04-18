@@ -24,24 +24,8 @@ const SchedulePage = dynamic(
   () => import("@/components/schedule-page").then((mod) => mod.SchedulePage),
   { loading: () => pageLoadingFallback }
 )
-const ChannelPage = dynamic(
-  () => import("@/components/channel-page").then((mod) => mod.ChannelPage),
-  { loading: () => pageLoadingFallback }
-)
-const PricingPage = dynamic(
-  () => import("@/components/pricing-page").then((mod) => mod.PricingPage),
-  { loading: () => pageLoadingFallback }
-)
-const ToolsPage = dynamic(
-  () => import("@/components/tools-page").then((mod) => mod.ToolsPage),
-  { loading: () => pageLoadingFallback }
-)
 const ConfigPage = dynamic(
   () => import("@/components/config-page").then((mod) => mod.ConfigPage),
-  { loading: () => pageLoadingFallback }
-)
-const LogsPage = dynamic(
-  () => import("@/components/logs-page").then((mod) => mod.LogsPage),
   { loading: () => pageLoadingFallback }
 )
 
@@ -49,6 +33,7 @@ export default function Home() {
   const [activeNav, setActiveNav] = useState("聊天")
   const [bootState, setBootState] = useState<"checking" | "onboarding" | "ready">("ready")
   const [uiMood, setUiMood] = useState<"low" | "medium" | "high" | "critical">("medium")
+  const [readyVisible, setReadyVisible] = useState(false)
 
   const applyMoodFromOnboardingState = () => {
     const state = loadOnboardingState()
@@ -122,6 +107,19 @@ export default function Home() {
     }
   }, [bootState])
 
+  useEffect(() => {
+    if (bootState !== "ready") {
+      setReadyVisible(false)
+      return
+    }
+
+    const timer = window.setTimeout(() => {
+      setReadyVisible(true)
+    }, 30)
+
+    return () => window.clearTimeout(timer)
+  }, [bootState])
+
   const renderContent = () => {
     switch (activeNav) {
       case "聊天":
@@ -130,16 +128,8 @@ export default function Home() {
         return <SkillsPage />
       case "定时任务":
         return <SchedulePage />
-      case "频道":
-        return <ChannelPage />
-      case "工具":
-        return <ToolsPage />
       case "配置":
         return <ConfigPage />
-      case "日志":
-        return <LogsPage />
-      case "价格":
-        return <PricingPage />
       default:
         return <ChatArea />
     }
@@ -177,7 +167,7 @@ export default function Home() {
   } as const
 
   return (
-    <div className="h-screen bg-transparent p-4 md:p-5">
+    <div className={`h-screen bg-transparent p-4 transition-all duration-500 ease-out md:p-5 ${readyVisible ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"}`}>
       <div className={`flex h-full flex-col overflow-hidden rounded-3xl transition-[background-color,border-color,box-shadow] duration-700 ease-out ${shellByMood[uiMood]}`}>
         <WindowControls title={`${activeNav} - PetClaw AI`} />
         <div className="flex min-h-0 flex-1" data-electron-no-drag="true">
