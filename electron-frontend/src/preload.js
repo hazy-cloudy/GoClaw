@@ -1,6 +1,11 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  getBackendBaseUrl: () => process.env.GOCLAW_BACKEND_URL || 'http://127.0.0.1:18800',
+  setOnboardingMode: (enabled) => ipcRenderer.send('set-onboarding-mode', Boolean(enabled)),
+  minimizeWindow: () => ipcRenderer.send('window-minimize'),
+  toggleMaximizeWindow: () => ipcRenderer.send('window-toggle-maximize'),
+  closeWindow: () => ipcRenderer.send('window-close'),
   openSettings: () => ipcRenderer.send('open-settings'),
   minimizeSettings: () => ipcRenderer.send('minimize-settings'),
   maximizeSettings: () => ipcRenderer.send('maximize-settings'),
