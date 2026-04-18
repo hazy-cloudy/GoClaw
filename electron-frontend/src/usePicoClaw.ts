@@ -316,15 +316,34 @@ export function usePicoClaw(apiBaseUrl: string, callbacks?: PicoCallbacks) {
       }
 
       if (msg.push_type === 'audio') {
-        let audioData = msg.data
-        if (typeof audioData === 'string') {
-          try {
-            audioData = JSON.parse(audioData)
-          } catch {
-            // keep raw string
+        const rawAudioData = decodeMaybeJSON(msg.data)
+        if (rawAudioData && typeof rawAudioData === 'object') {
+          const normalized = rawAudioData as {
+            chat_id?: number
+            ChatID?: number
+            text?: string
+            Text?: string
+            type?: string
+            is_final?: boolean
+            IsFinal?: boolean
           }
+          handlersRef.current['audio']?.({
+            chat_id: normalized.chat_id ?? normalized.ChatID ?? 0,
+            text: normalized.text ?? normalized.Text ?? '',
+            type: normalized.type ?? 'audio',
+            is_final:
+              normalized.is_final === true ||
+              normalized.IsFinal === true ||
+              msg.is_final === true,
+          })
+        } else if (typeof rawAudioData === 'string') {
+          handlersRef.current['audio']?.({
+            chat_id: 0,
+            text: rawAudioData,
+            type: 'audio',
+            is_final: msg.is_final === true,
+          })
         }
-        handlersRef.current['audio']?.(audioData)
         return
       }
 
@@ -373,7 +392,7 @@ export function usePicoClaw(apiBaseUrl: string, callbacks?: PicoCallbacks) {
         })
       }
     }
-  }, [])
+  }, [decodeMaybeJSON])
 
   const handlePicoMessage = useCallback((msg: any) => {
     if (msg.type === 'session.info') {
@@ -727,18 +746,6 @@ export function usePicoClaw(apiBaseUrl: string, callbacks?: PicoCallbacks) {
       callbacksRef.current?.onEmotionChange?.(data)
     }
 
-    handlersRef.current['audio'] = (data: any) => {
-      if (data && data.text) {
-        window.electronAPI?.showBubble({
-          text: null,
-          emotion: 'joy',
-          animation: 'happy',
-          animationHints: ['happy', 'standby', 'init.png'],
-          audio: data.text,
-        })
-      }
-    }
-
     const healthCheckInterval = setInterval(() => {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         void send('health_check', {})
@@ -748,7 +755,6 @@ export function usePicoClaw(apiBaseUrl: string, callbacks?: PicoCallbacks) {
     return () => {
       clearInterval(healthCheckInterval)
       delete handlersRef.current['heartbeat']
-      delete handlersRef.current['audio']
       disconnect()
     }
   }, [])

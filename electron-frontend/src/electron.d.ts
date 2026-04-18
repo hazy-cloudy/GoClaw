@@ -1,5 +1,13 @@
 export {}
 
+interface BubblePayload {
+  text: string | null
+  emotion?: string
+  audio?: string
+  animation?: string
+  animationHints?: string[]
+}
+
 declare global {
   interface Window {
     electronAPI?: {
@@ -9,11 +17,11 @@ declare global {
       closeSettings: () => void
       sendSettingsChange: (settings: any) => void
       sendChatHistory: (history: any[]) => void
-      showBubble: (text: string | null, emotion: string, audio?: string) => void
+      showBubble: (payload: BubblePayload) => void
       sendConnectionAlive: () => void
       onSettingsUpdate: (callback: (settings: any) => void) => void
       onChatHistoryUpdate: (callback: (history: any[]) => void) => void
-      onBubbleShow: (callback: (data: { text: string | null; emotion?: string; audio?: string }) => void) => void
+      onBubbleShow: (callback: (data: BubblePayload) => void) => void
       onConnectionAlive: (callback: () => void) => void
     }
   }

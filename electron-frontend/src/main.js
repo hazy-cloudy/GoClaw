@@ -23,8 +23,22 @@ function logToFile(message) {
 
 logToFile('Electron application started');
 
-const rendererBaseUrl = (process.env.ELECTRON_RENDERER_URL || 'http://localhost:5173').replace(/\/+$/, '');
+const rendererBaseUrl = (process.env.ELECTRON_RENDERER_URL || 'http://localhost:5173')
+  .trim()
+  .replace(/\/+$/, '');
 const shouldOpenDevTools = process.env.ELECTRON_OPEN_DEVTOOLS === '1';
+
+function revealWindow(win) {
+  if (!win || win.isDestroyed()) {
+    return;
+  }
+  if (win.isMinimized()) {
+    win.restore();
+  }
+  win.show();
+  win.moveTop();
+  win.focus();
+}
 
 function createPetWindow() {
   // 鑾峰彇灞忓箷鍙充笅瑙掍綅锟?
@@ -65,14 +79,16 @@ function createPetWindow() {
 }
 
 function createSettingsWindow() {
-  if (settingsWindow) {
-    settingsWindow.focus();
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    logToFile('[SETTINGS WINDOW] reusing existing window');
+    revealWindow(settingsWindow);
     return;
   }
 
   const { width, height } = screen.getPrimaryDisplay().workAreaSize;
   const settingsWidth = Math.round(width * 0.7);
   const settingsHeight = Math.round(height * 0.7);
+  const settingsUrl = `${rendererBaseUrl}/settings.html`;
   
   settingsWindow = new BrowserWindow({
     width: settingsWidth,
@@ -81,7 +97,8 @@ function createSettingsWindow() {
     minHeight: 400,
     show: false,
     frame: false,
-    transparent: true,
+    transparent: false,
+    backgroundColor: '#1e1e2e',
     alwaysOnTop: false,
     autoHideMenuBar: true,
     webPreferences: {
@@ -91,21 +108,48 @@ function createSettingsWindow() {
     }
   });
 
-  settingsWindow.loadURL(`${rendererBaseUrl}/settings.html`);
-
-  settingsWindow.once('ready-to-show', () => {
-    settingsWindow.show();
+  let hasBeenRevealed = false;
+  const revealSettingsWindow = () => {
+    if (!settingsWindow || settingsWindow.isDestroyed() || hasBeenRevealed) {
+      return;
+    }
+    hasBeenRevealed = true;
+    logToFile('[SETTINGS WINDOW] reveal');
+    revealWindow(settingsWindow);
     if (shouldOpenDevTools) {
       settingsWindow.webContents.openDevTools({ mode: 'detach' });
     }
+  };
+
+  logToFile(`[SETTINGS WINDOW] opening ${settingsUrl}`);
+
+  settingsWindow.once('ready-to-show', revealSettingsWindow);
+  settingsWindow.webContents.once('did-finish-load', () => {
+    logToFile('[SETTINGS WINDOW] did-finish-load');
+    revealSettingsWindow();
+  });
+  settingsWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    logToFile(`[SETTINGS WINDOW CONSOLE] level=${level} source=${sourceId}:${line} message=${message}`);
+  });
+  settingsWindow.webContents.on('did-fail-load', (_event, code, desc, url) => {
+    logToFile(`[SETTINGS WINDOW] did-fail-load code=${code} desc=${desc} url=${url}`);
+  });
+  settingsWindow.webContents.on('render-process-gone', (_event, details) => {
+    logToFile(`[SETTINGS WINDOW] render-process-gone reason=${details.reason} exitCode=${details.exitCode}`);
+  });
+
+  settingsWindow.loadURL(settingsUrl).catch((error) => {
+    logToFile(`[SETTINGS WINDOW] loadURL failed: ${error}`);
   });
 
   settingsWindow.on('closed', () => {
+    logToFile('[SETTINGS WINDOW] closed');
     settingsWindow = null;
   });
 }
 
 ipcMain.on('open-settings', () => {
+  logToFile('[IPC] open-settings');
   createSettingsWindow();
 });
 

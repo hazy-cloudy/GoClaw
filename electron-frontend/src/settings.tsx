@@ -94,6 +94,18 @@ interface CronJobDTO {
   state?: CronStateDTO
 }
 
+interface AudioPushData {
+  chat_id?: number
+  text?: string
+  is_final?: boolean
+  type?: string
+}
+
+interface PendingAudioStream {
+  chatId: number | null
+  chunks: Uint8Array[]
+}
+
 const API_BASE = 'http://127.0.0.1:18790'
 
 const ASSET_PREFIX =
@@ -250,6 +262,45 @@ function mergeFinalText(streamed: string, finalChunk?: string) {
   return `${streamText}${finalText}`.trim()
 }
 
+function decodeBase64Chunk(value: string): Uint8Array {
+  const base64 = value
+    .replace(/^data:audio\/[^;]+;base64,/, '')
+    .replace(/\s+/g, '')
+  if (!base64) {
+    return new Uint8Array()
+  }
+
+  const binary = window.atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i)
+  }
+  return bytes
+}
+
+function mergeAudioChunks(chunks: Uint8Array[]): Uint8Array {
+  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0)
+  const merged = new Uint8Array(totalLength)
+  let offset = 0
+  for (const chunk of chunks) {
+    merged.set(chunk, offset)
+    offset += chunk.length
+  }
+  return merged
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  if (bytes.length === 0) {
+    return ''
+  }
+
+  let binary = ''
+  for (let i = 0; i < bytes.length; i += 1) {
+    binary += String.fromCharCode(bytes[i])
+  }
+  return window.btoa(binary)
+}
+
 export default function PetClawApp() {
   const [page, setPage] = useState<PageType>('chat')
   const [menu, setMenu] = useState<MainMenu>('chat')
@@ -280,7 +331,7 @@ export default function PetClawApp() {
   const chatRef = useRef('')
   const emotionRef = useRef('neutral')
   const msgListRef = useRef<HTMLDivElement>(null)
-  const audioRef = useRef('')
+  const audioStreamRef = useRef<PendingAudioStream>({ chatId: null, chunks: [] })
   const responseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const { isListening, toggleListening } = useVoiceInput({
@@ -310,6 +361,10 @@ export default function PetClawApp() {
       clearTimeout(responseTimeoutRef.current)
       responseTimeoutRef.current = null
     }
+  }, [])
+
+  const resetAudioStream = useCallback(() => {
+    audioStreamRef.current = { chatId: null, chunks: [] }
   }, [])
 
   useEffect(() => {
@@ -401,21 +456,50 @@ export default function PetClawApp() {
     })
 
     on('audio', (raw) => {
-      const data = parseMaybeJSON<{ text?: string; is_final?: boolean }>(raw)
+      const data = parseMaybeJSON<AudioPushData>(raw)
       if (!data) {
         return
       }
+
+      if (data.type === 'error') {
+        resetAudioStream()
+        return
+      }
+
+      const currentStream = audioStreamRef.current
+      const incomingChatId =
+        typeof data.chat_id === 'number' && Number.isFinite(data.chat_id)
+          ? data.chat_id
+          : null
+
+      if (incomingChatId !== null && currentStream.chatId !== incomingChatId) {
+        currentStream.chatId = incomingChatId
+        currentStream.chunks = []
+      }
+
       if (data.text) {
-        audioRef.current += data.text
+        const chunkBytes = decodeBase64Chunk(data.text)
+        if (chunkBytes.length > 0) {
+          currentStream.chunks.push(chunkBytes)
+        }
       }
-      if (data.is_final && audioRef.current) {
-        window.electronAPI?.showBubble({
-          text: null,
-          emotion: emotionRef.current,
-          audio: audioRef.current,
-        })
-        audioRef.current = ''
+
+      if (!data.is_final) {
+        return
       }
+
+      const merged = mergeAudioChunks(currentStream.chunks)
+      resetAudioStream()
+      const audioBase64 = bytesToBase64(merged)
+      if (!audioBase64) {
+        return
+      }
+
+      window.electronAPI?.showBubble({
+        text: null,
+        emotion: emotionRef.current,
+        audio: audioBase64,
+      })
     })
 
     return () => {
@@ -424,7 +508,7 @@ export default function PetClawApp() {
       off('ai_chat')
       off('audio')
     }
-  }, [clearResponseTimeout, on, off])
+  }, [clearResponseTimeout, on, off, resetAudioStream])
 
   const sendMessage = useCallback(
     async (text?: string) => {
@@ -435,6 +519,7 @@ export default function PetClawApp() {
 
       setChatHistory((p) => [...p, { id: `u_${Date.now()}`, text: msg, time: timeText(), isUser: true }])
       setInputText('')
+      resetAudioStream()
 
       try {
         await send('chat', { text: msg })
@@ -464,7 +549,7 @@ export default function PetClawApp() {
         ])
       }
     },
-    [clearResponseTimeout, inputText, needOnboarding, send],
+    [clearResponseTimeout, inputText, needOnboarding, resetAudioStream, send],
   )
 
   const submitOnboarding = useCallback(async () => {
@@ -1014,7 +1099,7 @@ export default function PetClawApp() {
                       <div key={c.id} className="module-list-item">
                         <div>
                           <div className="module-card-title">{c.name}</div>
-                          <div className="module-card-meta">{c.schedule}</div>
+                          <div className="module-card-meta">{c.scheduleText}</div>
                           <div className="module-card-desc">{c.description}</div>
                         </div>
                         <button
