@@ -328,7 +328,7 @@ export function usePicoClaw(apiBaseUrl: string, callbacks?: PicoCallbacks) {
             IsFinal?: boolean
           }
           handlersRef.current['audio']?.({
-            chat_id: normalized.chat_id ?? normalized.ChatID ?? 0,
+            chat_id: normalized.chat_id ?? normalized.ChatID,
             text: normalized.text ?? normalized.Text ?? '',
             type: normalized.type ?? 'audio',
             is_final:
@@ -338,7 +338,6 @@ export function usePicoClaw(apiBaseUrl: string, callbacks?: PicoCallbacks) {
           })
         } else if (typeof rawAudioData === 'string') {
           handlersRef.current['audio']?.({
-            chat_id: 0,
             text: rawAudioData,
             type: 'audio',
             is_final: msg.is_final === true,
