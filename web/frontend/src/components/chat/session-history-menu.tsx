@@ -77,7 +77,7 @@ export function SessionHistoryMenu({
                   {t("chat.messagesCount", {
                     count: session.message_count,
                   })}{" "}
-                  · {dayjs(session.updated).fromNow()}
+                  | {dayjs(session.updated).fromNow()}
                 </span>
                 <Button
                   variant="ghost"

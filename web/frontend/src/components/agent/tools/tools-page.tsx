@@ -40,12 +40,17 @@ export function ToolsPage() {
   const toggleMutation = useMutation({
     mutationFn: async ({ name, enabled }: { name: string; enabled: boolean }) =>
       setToolEnabled(name, enabled),
-    onSuccess: (_, variables) => {
+    onSuccess: (result, variables) => {
       toast.success(
         variables.enabled
           ? t("pages.agent.tools.enable_success")
           : t("pages.agent.tools.disable_success"),
       )
+
+      if (result.source === "mock") {
+        toast.info("Updated in mock mode")
+      }
+
       void queryClient.invalidateQueries({ queryKey: ["tools"] })
       void refreshGatewayState({ force: true })
     },
@@ -135,6 +140,14 @@ export function ToolsPage() {
             </div>
           </div>
 
+          {data?.source === "mock" && (
+            <Card className="border-amber-300/60 bg-amber-50/60">
+              <CardContent className="py-3 text-sm text-amber-900">
+                Using mock tool data. Start the gateway backend to sync real tool states.
+              </CardContent>
+            </Card>
+          )}
+
           {/* Content Area */}
           {error ? (
             <Card className="border-destructive/50 bg-destructive/10 cursor-default">
@@ -199,8 +212,11 @@ export function ToolsPage() {
                   </h3>
                   <div className="grid gap-4 lg:grid-cols-2">
                     {items.map((tool) => {
-                      const reasonText = tool.reason_code
-                        ? t(`pages.agent.tools.reasons.${tool.reason_code}`)
+                      const reasonKey = tool.reason_code
+                        ? `pages.agent.tools.reasons.${tool.reason_code}`
+                        : ""
+                      const reasonText = reasonKey
+                        ? t(reasonKey, { defaultValue: tool.reason_code })
                         : ""
                       const isPending =
                         toggleMutation.isPending &&
