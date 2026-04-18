@@ -6,6 +6,11 @@ const fs = require('fs');
 let petWindow = null;
 let settingsWindow = null;
 
+const PET_WIDTH = 280;
+const PET_HEIGHT = 380;
+const ONBOARDING_WIDTH = 1280;
+const ONBOARDING_HEIGHT = 860;
+
 const userDataPath = path.join(os.homedir(), '.goclaw');
 app.setPath('userData', userDataPath);
 
@@ -30,14 +35,12 @@ const shouldOpenDevTools = process.env.ELECTRON_OPEN_DEVTOOLS === '1';
 
 function createPetWindow() {
   const { width, height } = screen.getPrimaryDisplay().workAreaSize;
-  const petWidth = 280;
-  const petHeight = 380;
 
   petWindow = new BrowserWindow({
-    width: petWidth,
-    height: petHeight,
-    x: width - petWidth - 20,
-    y: height - petHeight - 60,
+    width: PET_WIDTH,
+    height: PET_HEIGHT,
+    x: width - PET_WIDTH - 20,
+    y: height - PET_HEIGHT - 60,
     frame: false,
     transparent: true,
     alwaysOnTop: true,
@@ -63,6 +66,35 @@ function createPetWindow() {
     petWindow = null;
     app.quit();
   });
+}
+
+function applyOnboardingMode(enabled) {
+  if (!petWindow || petWindow.isDestroyed()) {
+    return;
+  }
+
+  const display = screen.getDisplayMatching(petWindow.getBounds());
+  const area = display.workArea;
+
+  if (enabled) {
+    const width = Math.min(ONBOARDING_WIDTH, area.width - 40);
+    const height = Math.min(ONBOARDING_HEIGHT, area.height - 40);
+    const x = area.x + Math.round((area.width - width) / 2);
+    const y = area.y + Math.round((area.height - height) / 2);
+
+    petWindow.setResizable(true);
+    petWindow.setAlwaysOnTop(false);
+    petWindow.setSkipTaskbar(false);
+    petWindow.setBounds({ x, y, width, height }, true);
+    return;
+  }
+
+  const x = area.x + area.width - PET_WIDTH - 20;
+  const y = area.y + area.height - PET_HEIGHT - 60;
+  petWindow.setResizable(false);
+  petWindow.setAlwaysOnTop(true);
+  petWindow.setSkipTaskbar(true);
+  petWindow.setBounds({ x, y, width: PET_WIDTH, height: PET_HEIGHT }, true);
 }
 
 function createSettingsWindow() {
@@ -128,6 +160,37 @@ function createSettingsWindow() {
 ipcMain.on('open-settings', () => {
   logToFile('[IPC] open-settings');
   createSettingsWindow();
+});
+
+ipcMain.on('set-onboarding-mode', (_event, enabled) => {
+  logToFile(`[IPC] set-onboarding-mode ${Boolean(enabled)}`);
+  applyOnboardingMode(Boolean(enabled));
+});
+
+ipcMain.on('window-minimize', (event) => {
+  const target = BrowserWindow.fromWebContents(event.sender);
+  if (target && !target.isDestroyed()) {
+    target.minimize();
+  }
+});
+
+ipcMain.on('window-toggle-maximize', (event) => {
+  const target = BrowserWindow.fromWebContents(event.sender);
+  if (!target || target.isDestroyed()) {
+    return;
+  }
+  if (target.isMaximized()) {
+    target.unmaximize();
+  } else {
+    target.maximize();
+  }
+});
+
+ipcMain.on('window-close', (event) => {
+  const target = BrowserWindow.fromWebContents(event.sender);
+  if (target && !target.isDestroyed()) {
+    target.close();
+  }
 });
 
 ipcMain.on('renderer-log', (_event, { level, args }) => {

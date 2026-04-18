@@ -1,19 +1,126 @@
-// PicoClaw API 配置
-// 后端默认运行在 127.0.0.1:18800
+const LOCAL_DEFAULT_ORIGIN = 'http://127.0.0.1:18800'
 
-export const API_BASE_URL = process.env.NEXT_PUBLIC_PICOCLAW_API_URL || 'http://127.0.0.1:18800'
-export const WS_BASE_URL = process.env.NEXT_PUBLIC_PICOCLAW_WS_URL || 'ws://127.0.0.1:18800'
-export const WSS_BASE_URL = process.env.NEXT_PUBLIC_PICOCLAW_WSS_URL || 'wss://127.0.0.1:18800'
+export const API_BASE_URL = process.env.NEXT_PUBLIC_PICOCLAW_API_URL || ''
+export const WS_BASE_URL = process.env.NEXT_PUBLIC_PICOCLAW_WS_URL || ''
+export const WSS_BASE_URL = process.env.NEXT_PUBLIC_PICOCLAW_WSS_URL || ''
+export const LAUNCHER_TOKEN = process.env.NEXT_PUBLIC_PICOCLAW_LAUNCHER_TOKEN || ''
+export const USE_CREDENTIALS = process.env.NEXT_PUBLIC_PICOCLAW_USE_CREDENTIALS !== 'false'
 
-// API 端点
+export function getApiBaseUrl(): string {
+  if (API_BASE_URL) {
+    return API_BASE_URL
+  }
+
+  if (typeof window !== 'undefined') {
+    const electronApiBase = window.electronAPI?.getBackendBaseUrl?.()
+    if (electronApiBase && electronApiBase.trim()) {
+      return electronApiBase.trim()
+    }
+  }
+
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    const port = window.location.port
+    if (port === '3000' || port === '3001' || port === '5173') {
+      return LOCAL_DEFAULT_ORIGIN
+    }
+    return window.location.origin
+  }
+
+  return LOCAL_DEFAULT_ORIGIN
+}
+
+export function getWsBaseUrl(): string {
+  if (WS_BASE_URL) {
+    return WS_BASE_URL
+  }
+
+  const apiBase = getApiBaseUrl()
+  return apiBase.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:')
+}
+
+export function getWssBaseUrl(): string {
+  if (WSS_BASE_URL) {
+    return WSS_BASE_URL
+  }
+  return getWsBaseUrl().replace(/^ws:/, 'wss:')
+}
+
+export function resolveLauncherToken(): string {
+  if (LAUNCHER_TOKEN) {
+    return LAUNCHER_TOKEN
+  }
+
+  if (typeof window !== 'undefined') {
+    const token = new URLSearchParams(window.location.search).get('token')
+    if (token && token.trim()) {
+      const clean = token.trim()
+      try {
+        window.sessionStorage.setItem('petclaw.launcher.token', clean)
+      } catch {
+      }
+      return clean
+    }
+
+    try {
+      const cached = window.sessionStorage.getItem('petclaw.launcher.token')
+      if (cached && cached.trim()) {
+        return cached.trim()
+      }
+    } catch {
+    }
+  }
+
+  return ''
+}
+
+export function withLauncherAuthHeader(headers: HeadersInit = {}): HeadersInit {
+  const token = resolveLauncherToken()
+  if (!token) {
+    return headers
+  }
+  return {
+    ...headers,
+    Authorization: `Bearer ${token}`,
+  }
+}
+
+function isCrossOriginRequest(input: string): boolean {
+  if (typeof window === 'undefined') {
+    return false
+  }
+
+  try {
+    const target = new URL(input, window.location.href)
+    return target.origin !== window.location.origin
+  } catch {
+    return false
+  }
+}
+
+export function getAuthRequestCredentials(input: string): RequestCredentials {
+  if (!USE_CREDENTIALS) {
+    return 'omit'
+  }
+  if (resolveLauncherToken() && isCrossOriginRequest(input)) {
+    return 'omit'
+  }
+  return 'include'
+}
+
+export function withLauncherAuthRequest(input: string, init: RequestInit = {}): RequestInit {
+  return {
+    ...init,
+    headers: withLauncherAuthHeader(init.headers),
+    credentials: init.credentials === 'omit' ? 'omit' : getAuthRequestCredentials(input),
+  }
+}
+
 export const API_ENDPOINTS = {
-  // 认证
   AUTH: {
     LOGIN: '/api/auth/login',
     LOGOUT: '/api/auth/logout',
     STATUS: '/api/auth/status',
   },
-  // 网关管理
   GATEWAY: {
     STATUS: '/api/gateway/status',
     START: '/api/gateway/start',
@@ -21,7 +128,6 @@ export const API_ENDPOINTS = {
     RESTART: '/api/gateway/restart',
     LOGS: '/api/gateway/logs',
   },
-  // 模型管理
   MODELS: {
     LIST: '/api/models',
     DEFAULT: '/api/models/default',
@@ -29,14 +135,12 @@ export const API_ENDPOINTS = {
     UPDATE: (id: string) => `/api/models/${id}`,
     DELETE: (id: string) => `/api/models/${id}`,
   },
-  // 凭据管理
   CREDENTIALS: {
     LIST: '/api/credentials',
     CREATE: '/api/credentials',
     UPDATE: (provider: string) => `/api/credentials/${provider}`,
     DELETE: (provider: string) => `/api/credentials/${provider}`,
   },
-  // 渠道管理
   CHANNELS: {
     LIST: '/api/channels',
     CATALOG: '/api/channels/catalog',
@@ -45,7 +149,6 @@ export const API_ENDPOINTS = {
     DISABLE: (id: string) => `/api/channels/${id}/disable`,
     CONFIG: (id: string) => `/api/channels/${id}/config`,
   },
-  // 技能管理
   SKILLS: {
     LIST: '/api/agent/skills',
     BUILTIN: '/api/agent/skills/builtin',
@@ -54,12 +157,10 @@ export const API_ENDPOINTS = {
     IMPORT: '/api/agent/skills/import',
     DELETE: (id: string) => `/api/agent/skills/${id}`,
   },
-  // 工具管理
   TOOLS: {
     LIST: '/api/agent/tools',
     TOGGLE: (id: string) => `/api/agent/tools/${id}/toggle`,
   },
-  // 定时任务
   CRON: {
     LIST: '/api/cron',
     CREATE: '/api/cron',
@@ -67,22 +168,23 @@ export const API_ENDPOINTS = {
     DELETE: (id: string) => `/api/cron/${id}`,
     TOGGLE: (id: string) => `/api/cron/${id}/toggle`,
   },
-  // 配置管理
   CONFIG: {
     GET: '/api/config',
     UPDATE: '/api/config',
     RAW: '/api/config/raw',
   },
-  // 日志
   LOGS: {
     GET: '/api/logs',
     CLEAR: '/api/logs/clear',
   },
-  // 聊天 WebSocket
   CHAT: {
-    WS: '/pico/ws',
+    WS: '/pet/ws',
+    WS_LEGACY: '/pico/ws',
   },
-  // Pico Channel
+  PET: {
+    TOKEN: '/api/pet/token',
+    SETUP: '/api/pet/setup',
+  },
   PICO: {
     TOKEN: '/api/pico/token',
     SETUP: '/api/pico/setup',

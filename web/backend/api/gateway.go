@@ -10,12 +10,15 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/sipeed/picoclaw/pkg/channels/pico"
 	"github.com/sipeed/picoclaw/pkg/config"
@@ -49,6 +52,27 @@ func refreshPicoToken(cfg *config.Config) {
 	gateway.picoToken = cfg.Channels.Pico.Token.String()
 }
 
+func loadPicoTokenFromSecurityConfig(configPath string) string {
+	secPath := filepath.Join(filepath.Dir(configPath), config.SecurityConfigFile)
+	data, err := os.ReadFile(secPath)
+	if err != nil {
+		return ""
+	}
+
+	var sec struct {
+		Channels struct {
+			Pico struct {
+				Token string `yaml:"token"`
+			} `yaml:"pico"`
+		} `yaml:"channels"`
+	}
+	if err := yaml.Unmarshal(data, &sec); err != nil {
+		return ""
+	}
+
+	return strings.TrimSpace(sec.Channels.Pico.Token)
+}
+
 // refreshPicoTokensLocked reads the pico token from config and caches it.
 // Caller must hold gateway.mu (or be sole writer).
 func refreshPicoTokensLocked(configPath string) {
@@ -56,6 +80,11 @@ func refreshPicoTokensLocked(configPath string) {
 	if err != nil {
 		return
 	}
+
+	if token := loadPicoTokenFromSecurityConfig(configPath); token != "" {
+		cfg.Channels.Pico.SetToken(token)
+	}
+
 	gateway.picoToken = cfg.Channels.Pico.Token.String()
 }
 
@@ -67,6 +96,22 @@ func ensurePicoTokenCachedLocked(configPath string) {
 		return
 	}
 	refreshPicoTokensLocked(configPath)
+}
+
+func readGatewayPidData(configPath string) *ppid.PidFileData {
+	primaryDir := strings.TrimSpace(globalConfigDir())
+	if pd := ppid.ReadPidFileWithCheck(primaryDir); pd != nil {
+		return pd
+	}
+
+	cfgDir := strings.TrimSpace(filepath.Dir(configPath))
+	if cfgDir != "" && !strings.EqualFold(cfgDir, primaryDir) {
+		if pd := ppid.ReadPidFileWithCheck(cfgDir); pd != nil {
+			return pd
+		}
+	}
+
+	return nil
 }
 
 func (h *Handler) gatewayCommandArgs() []string {
@@ -86,14 +131,17 @@ const (
 func picoComposedToken(token string) string {
 	gateway.mu.Lock()
 	defer gateway.mu.Unlock()
-	// if not initial pico token, don't allow gateway auth
-	if gateway.picoToken == "" || gateway.pidData == nil {
+	if gateway.picoToken == "" {
 		return ""
 	}
 	if tokenPrefix+gateway.picoToken != token {
 		return ""
 	}
-	return pico.PicoTokenPrefix + gateway.pidData.Token + gateway.picoToken
+	if gateway.pidData != nil && gateway.pidData.Token != "" {
+		return pico.PicoTokenPrefix + gateway.pidData.Token + gateway.picoToken
+	}
+	// Fallback: gateway also accepts raw Pico token.
+	return gateway.picoToken
 }
 
 var (
@@ -164,7 +212,7 @@ func (h *Handler) registerGatewayRoutes(mux *http.ServeMux) {
 // starts it when possible. Intended to be called by the backend at startup.
 func (h *Handler) TryAutoStartGateway() {
 	// Check PID file first to detect an already-running gateway.
-	pidData := ppid.ReadPidFileWithCheck(globalConfigDir())
+	pidData := readGatewayPidData(h.configPath)
 	if pidData != nil {
 		gateway.mu.Lock()
 		ready, reason, err := h.gatewayStartReady()
@@ -546,6 +594,15 @@ func (h *Handler) startGatewayLocked(initialStatus string, existingPid int) (int
 	// config file without requiring a --config flag on the gateway subcommand.
 	if h.configPath != "" {
 		cmd.Env = append(cmd.Env, config.EnvConfig+"="+h.configPath)
+		if cfgDir := strings.TrimSpace(filepath.Dir(h.configPath)); cfgDir != "" {
+			cmd.Env = append(cmd.Env, config.EnvHome+"="+cfgDir)
+		}
+	}
+	// Also forward the home directory so gateway writes PID files to the correct location
+	if homeDir := os.Getenv(config.EnvHome); homeDir != "" {
+		cmd.Env = append(cmd.Env, config.EnvHome+"="+homeDir)
+	} else if configDir := os.Getenv("PICOCLAW_CONFIG_DIR"); configDir != "" {
+		cmd.Env = append(cmd.Env, config.EnvHome+"="+configDir)
 	}
 	if host := h.gatewayHostOverride(); host != "" {
 		cmd.Env = append(cmd.Env, config.EnvGatewayHost+"="+host)
@@ -624,7 +681,7 @@ func (h *Handler) startGatewayLocked(initialStatus string, existingPid int) (int
 			}
 
 			// Poll for pidFile first — once available we have port/host/token.
-			if pd := ppid.ReadPidFileWithCheck(globalConfigDir()); pd != nil && pd.PID == pid {
+			if pd := readGatewayPidData(h.configPath); pd != nil && pd.PID == pid {
 				gateway.mu.Lock()
 				if gateway.cmd == cmd {
 					gateway.pidData = pd
@@ -661,7 +718,7 @@ func (h *Handler) startGatewayLocked(initialStatus string, existingPid int) (int
 //	POST /api/gateway/start
 func (h *Handler) handleGatewayStart(w http.ResponseWriter, r *http.Request) {
 	// Check PID file first to detect an already-running gateway.
-	pidData := ppid.ReadPidFileWithCheck(globalConfigDir())
+	pidData := readGatewayPidData(h.configPath)
 	if pidData != nil {
 		pid := pidData.PID
 		gateway.mu.Lock()
@@ -901,7 +958,7 @@ func (h *Handler) gatewayStatusData() map[string]any {
 	}
 
 	// Primary detection: read PID file and check if process is alive.
-	pidData := ppid.ReadPidFileWithCheck(globalConfigDir())
+	pidData := readGatewayPidData(h.configPath)
 	if pidData != nil {
 		gateway.mu.Lock()
 		gateway.pidData = pidData

@@ -1,27 +1,17 @@
-import { API_BASE_URL, API_ENDPOINTS } from './config'
+import {
+  API_ENDPOINTS,
+  getApiBaseUrl,
+  getAuthRequestCredentials,
+  getWsBaseUrl,
+  withLauncherAuthHeader,
+} from './config'
 
-function getWebSocketURL(): string {
-  // 直接连接到 Gateway (18790) 的 /pico/ws 端点
-  return `ws://127.0.0.1:18790/pico/ws`
-}
+const CHAT_ACTION = 'chat'
 
-// Pico Protocol 消息类型
-const PICO_TYPE_MESSAGE_SEND = "message.send"
-const PICO_TYPE_MESSAGE_CREATE = "message.create"
-const PICO_TYPE_MESSAGE_UPDATE = "message.update"
-const PICO_TYPE_TYPING_START = "typing.start"
-const PICO_TYPE_TYPING_STOP = "typing.stop"
-const PICO_TYPE_PING = "ping"
-const PICO_TYPE_PONG = "pong"
-const PICO_TYPE_ERROR = "error"
+const PUSH_TYPE_AI_CHAT = 'ai_chat'
+const PUSH_TYPE_EMOTION_CHANGE = 'emotion_change'
+const PUSH_TYPE_ACTION_TRIGGER = 'action_trigger'
 
-// 从 API 获取 Pico token
-async function fetchPicoToken(): Promise<string> {
-  // 直接使用配置中的 token
-  return "pico-test-token-123"
-}
-
-// 聊天消息类型
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant' | 'system'
@@ -31,14 +21,45 @@ export interface ChatMessage {
   error?: string
 }
 
-// WebSocket 事件类型
-export type WSEventType = 
+interface PetRequest {
+  action: string
+  data?: Record<string, unknown>
+  request_id?: string
+}
+
+interface PetResponse {
+  status: string
+  action?: string
+  data?: Record<string, unknown>
+  error?: string
+  request_id?: string
+}
+
+interface PetPush {
+  type: string
+  push_type: string
+  data?: Record<string, unknown>
+  timestamp: number
+}
+
+interface TokenResponse {
+  enabled?: boolean
+  token?: string
+  ws_url?: string
+}
+
+type WSMode = 'pet'
+type OutboundRequest = PetRequest
+
+export type WSEventType =
   | 'connected'
   | 'disconnected'
   | 'message'
   | 'typing'
   | 'error'
   | 'reconnecting'
+  | 'emotion_change'
+  | 'action_trigger'
 
 export interface WSEvent {
   type: WSEventType
@@ -49,16 +70,21 @@ type WSEventHandler = (event: WSEvent) => void
 
 export class PicoClawWebSocket {
   private ws: WebSocket | null = null
-  private token: string = ''
-  private sessionId: string = ''
+  private sessionId = ''
   private reconnectAttempts = 0
-  private maxReconnectAttempts = 5
-  private reconnectDelay = 1000
+  private readonly maxReconnectAttempts = 5
+  private readonly reconnectDelay = 1000
   private handlers: Set<WSEventHandler> = new Set()
-  private messageQueue: any[] = []
+  private wsMode: WSMode = 'pet'
+  private messageQueue: OutboundRequest[] = []
   private isConnecting = false
-
-  constructor() {}
+  private msgIdCounter = 0
+  private lastConnectUrl = ''
+  private manualClose = false
+  private openHandlers: {
+    settle: () => void
+    fail: (err: Error) => void
+  } | null = null
 
   async connect(): Promise<void> {
     return new Promise(async (resolve, reject) => {
@@ -68,160 +94,261 @@ export class PicoClawWebSocket {
       }
 
       if (this.isConnecting) {
-        const checkConnection = setInterval(() => {
+        const startedAt = Date.now()
+        const timer = window.setInterval(() => {
           if (this.ws?.readyState === WebSocket.OPEN) {
-            clearInterval(checkConnection)
+            window.clearInterval(timer)
             resolve()
+            return
+          }
+          if (!this.isConnecting || Date.now() - startedAt > 10000) {
+            window.clearInterval(timer)
+            reject(new Error('Connection in progress timed out'))
           }
         }, 100)
         return
       }
 
-      try {
-        this.token = await fetchPicoToken()
-        this.sessionId = this.generateSessionId()
-      } catch (err) {
-        reject(err)
-        return
+      this.openHandlers = {
+        settle: () => resolve(),
+        fail: (err: Error) => reject(err),
       }
 
-      this.isConnecting = true
-      const url = `${getWebSocketURL()}?session_id=${this.sessionId}&token=${this.token}`
-      
       try {
-        this.ws = new WebSocket(url)
-
-        this.ws.onopen = () => {
-          this.isConnecting = false
-          this.reconnectAttempts = 0
-          this.emit({ type: 'connected' })
-
-          while (this.messageQueue.length > 0) {
-            const msg = this.messageQueue.shift()
-            if (msg) this.sendRaw(msg)
-          }
-
-          resolve()
+        if (!this.sessionId) {
+          this.sessionId = this.generateSessionId()
         }
-
-        this.ws.onmessage = (event) => {
-          try {
-            const picoMsg = JSON.parse(event.data)
-            this.handlePicoMessage(picoMsg)
-          } catch {
-            this.emit({ type: 'error', data: 'Invalid message format' })
-          }
-        }
-
-        this.ws.onerror = () => {
-          this.isConnecting = false
-          this.emit({ type: 'error', data: 'WebSocket error' })
-          reject(new Error('WebSocket error'))
-        }
-
-        this.ws.onclose = () => {
-          this.isConnecting = false
-          this.emit({ type: 'disconnected' })
-          this.attemptReconnect()
-        }
-      } catch (error) {
-        this.isConnecting = false
-        reject(error)
+        const { token, wsPath, mode } = await this.resolveTokenAndPath()
+        this.wsMode = mode
+        const query = `session=${encodeURIComponent(this.sessionId)}&session_id=${encodeURIComponent(this.sessionId)}`
+        const url = `${getWsBaseUrl()}${wsPath}?${query}`
+        this.connectWebSocket(url, token, mode)
+      } catch (err) {
+        this.openHandlers = null
+        reject(err instanceof Error ? err : new Error('WebSocket bootstrap failed'))
       }
     })
   }
 
-  private handlePicoMessage(msg: any): void {
-    switch (msg.type) {
-      case PICO_TYPE_MESSAGE_CREATE:
-        if (msg.payload) {
-          const content = msg.payload['content'] as string
-          const isThought = msg.payload['thought'] as boolean
-          const chatMsg: ChatMessage = {
-            id: msg.id || `msg-${Date.now()}`,
-            role: isThought ? 'system' : 'assistant',
-            content: typeof content === 'string' ? content : '',
-            timestamp: msg.timestamp || Date.now(),
-            streaming: false,
+  private async resolveTokenAndPath(): Promise<{ token: string; wsPath: string; mode: WSMode }> {
+    const endpoint = { tokenPath: API_ENDPOINTS.PET.TOKEN, wsPath: API_ENDPOINTS.CHAT.WS }
+
+    const res = await fetch(`${getApiBaseUrl()}${endpoint.tokenPath}`, {
+      method: 'GET',
+      headers: withLauncherAuthHeader(),
+      credentials: getAuthRequestCredentials(`${getApiBaseUrl()}${endpoint.tokenPath}`),
+    })
+
+    if (res.status === 404) {
+      throw new Error('PET channel not available')
+    }
+
+    if (!res.ok) {
+      throw new Error(`Token endpoint failed (${endpoint.tokenPath}): HTTP ${res.status}`)
+    }
+
+    const data = (await res.json()) as TokenResponse
+    if (!data.enabled) {
+      throw new Error(`Channel not enabled (${endpoint.tokenPath})`)
+    }
+    const wsPathFromToken = this.normalizeWsPath(data.ws_url)
+    const wsPath = wsPathFromToken || endpoint.wsPath
+    const mode: WSMode = 'pet'
+    const token = data.token || ''
+
+    return {
+      token,
+      wsPath,
+      mode,
+    }
+  }
+
+  private normalizeWsPath(raw?: string): string {
+    if (!raw || !raw.trim()) {
+      return ''
+    }
+
+    const value = raw.trim()
+
+    try {
+      if (value.startsWith('ws://') || value.startsWith('wss://') || value.startsWith('http://') || value.startsWith('https://')) {
+        const parsed = new URL(value)
+        return parsed.pathname || ''
+      }
+    } catch {
+      return ''
+    }
+
+    return value.startsWith('/') ? value : `/${value}`
+  }
+
+  private connectWebSocket(url: string, token: string, mode: WSMode): void {
+    this.isConnecting = true
+    this.lastConnectUrl = url
+    this.manualClose = false
+
+    try {
+      const protocols = token ? [`token.${token}`] : undefined
+      this.ws = protocols ? new WebSocket(url, protocols) : new WebSocket(url)
+
+      this.ws.onopen = () => {
+        this.isConnecting = false
+        this.reconnectAttempts = 0
+        this.emit({ type: 'connected' })
+
+        while (this.messageQueue.length > 0) {
+          const msg = this.messageQueue.shift()
+          if (msg) this.sendRaw(msg)
+        }
+
+        this.openHandlers?.settle()
+        this.openHandlers = null
+      }
+
+      this.ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data)
+
+          if (data.type === 'push') {
+            this.handlePush(data)
+          } else {
+            this.handleResponse(data)
           }
-          this.emit({ type: 'message', data: chatMsg })
+        } catch {
+          this.emit({ type: 'error', data: 'Invalid message format' })
         }
-        break
+      }
 
-      case PICO_TYPE_MESSAGE_UPDATE:
-        if (msg.payload) {
-          const content = msg.payload['content'] as string
-          const chatMsg: ChatMessage = {
-            id: (msg.payload['message_id'] as string) || '',
-            role: 'assistant',
-            content: typeof content === 'string' ? content : '',
-            timestamp: msg.timestamp || Date.now(),
-            streaming: true,
-          }
-          this.emit({ type: 'message', data: chatMsg })
+      this.ws.onerror = () => {
+        this.isConnecting = false
+        const msg = `WebSocket error (${this.lastConnectUrl})`
+        this.emit({ type: 'error', data: msg })
+        this.openHandlers?.fail(new Error(msg))
+        this.openHandlers = null
+      }
+
+      this.ws.onclose = (event) => {
+        this.isConnecting = false
+        this.emit({ type: 'disconnected' })
+
+        if (this.manualClose) {
+          this.manualClose = false
+          return
         }
-        break
 
-      case PICO_TYPE_TYPING_START:
-        this.emit({ type: 'typing', data: 'true' })
-        break
-
-      case PICO_TYPE_TYPING_STOP:
-        this.emit({ type: 'typing', data: 'false' })
-        break
-
-      case PICO_TYPE_PONG:
-        break
-
-      case PICO_TYPE_PING:
-        this.sendRaw({
-          type: PICO_TYPE_PONG,
-          id: msg.id,
-          session_id: this.sessionId,
-          timestamp: Date.now(),
-        })
-        break
-
-      case PICO_TYPE_ERROR:
-        if (msg.payload) {
-          const code = msg.payload['code'] as string
-          const errorMsg = msg.payload['message'] as string
-          this.emit({ type: 'error', data: `${code}: ${errorMsg}` })
+        if (event.code !== 1000) {
+          this.emit({ type: 'error', data: `WebSocket closed: code=${event.code} reason=${event.reason || 'none'}` })
         }
+
+        this.attemptReconnect()
+      }
+    } catch (error) {
+      this.isConnecting = false
+      const err = error instanceof Error ? error : new Error('WebSocket connection failed')
+      this.openHandlers?.fail(err)
+      this.openHandlers = null
+    }
+  }
+
+  private handlePush(push: PetPush): void {
+    const data = push.data || {}
+
+    switch (push.push_type) {
+      case PUSH_TYPE_AI_CHAT:
+        this.handleAIChatPush(data)
+        break
+      case PUSH_TYPE_EMOTION_CHANGE:
+        this.handleEmotionChangePush(data)
+        break
+      case PUSH_TYPE_ACTION_TRIGGER:
+        this.handleActionTriggerPush(data)
         break
     }
+  }
+
+  private handleAIChatPush(data: Record<string, unknown>): void {
+    const chatId = (data.chat_id as number) || 0
+    const contentType = (data.type as string) || 'text'
+    const text = (data.text as string) || ''
+
+    if (contentType === 'text' || contentType === '') {
+      const chatMsg: ChatMessage = {
+        id: `msg-${chatId}`,
+        role: 'assistant',
+        content: text,
+        timestamp: Date.now(),
+        streaming: true,
+      }
+      this.emit({ type: 'message', data: chatMsg })
+      return
+    }
+
+    if (contentType === 'final') {
+      const chatMsg: ChatMessage = {
+        id: `msg-${chatId}`,
+        role: 'assistant',
+        content: text,
+        timestamp: Date.now(),
+        streaming: false,
+      }
+      this.emit({ type: 'message', data: chatMsg })
+      this.emit({ type: 'typing', data: 'false' })
+    }
+  }
+
+  private handleEmotionChangePush(data: Record<string, unknown>): void {
+    const emotion = (data.emotion as string) || ''
+    this.emit({ type: 'emotion_change', data: emotion })
+  }
+
+  private handleActionTriggerPush(data: Record<string, unknown>): void {
+    const action = (data.action as string) || ''
+    this.emit({ type: 'action_trigger', data: action })
+  }
+
+  private handleResponse(_resp: PetResponse): void {
   }
 
   disconnect(): void {
     if (this.ws) {
+      this.manualClose = true
       this.ws.close()
       this.ws = null
     }
-    this.reconnectAttempts = this.maxReconnectAttempts
+    this.reconnectAttempts = 0
+  }
+
+  resetReconnectAttempts(): void {
+    this.reconnectAttempts = 0
   }
 
   send(content: string): void {
-    const msg: any = {
-      type: PICO_TYPE_MESSAGE_SEND,
-      id: `msg-${Date.now()}`,
-      session_id: this.sessionId,
-      timestamp: Date.now(),
-      payload: {
-        content: content,
-      },
+    this.sendAction(CHAT_ACTION, {
+      text: content,
+      session_key: this.sessionId,
+    })
+  }
+
+  private sendAction(action: string, data?: Record<string, unknown>): void {
+    const requestId = `req-${++this.msgIdCounter}-${Date.now()}`
+    const msg: PetRequest = {
+      action,
+      data,
+      request_id: requestId,
     }
 
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.sendRaw(msg)
-    } else {
-      this.messageQueue.push(msg)
-      this.connect().catch(() => {
-        this.emit({ type: 'error', data: 'Connection failed' })
-      })
+      return
     }
+
+    this.messageQueue.push(msg)
+    this.connect().catch(() => {
+      this.emit({ type: 'error', data: 'Connection failed' })
+    })
   }
 
-  private sendRaw(msg: any): void {
+  private sendRaw(msg: OutboundRequest): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(msg))
     }
@@ -242,14 +369,14 @@ export class PicoClawWebSocket {
 
   private attemptReconnect(): void {
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      this.emit({ type: 'error', data: 'Max reconnection attempts reached' })
+      this.emit({ type: 'error', data: `Max reconnection attempts reached (${this.lastConnectUrl || 'unknown url'})` })
       return
     }
 
     this.reconnectAttempts++
     this.emit({ type: 'reconnecting' })
 
-    setTimeout(() => {
+    window.setTimeout(() => {
       this.connect().catch(() => {})
     }, this.reconnectDelay * this.reconnectAttempts)
   }

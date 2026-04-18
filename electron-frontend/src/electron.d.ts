@@ -20,6 +20,12 @@ declare global {
         (payload: BubblePayload): void
         (text: string | null, emotion: string, audio?: string): void
       }
+      getBackendBaseUrl: () => string
+      getLauncherToken: () => string
+      setOnboardingMode: (enabled: boolean) => void
+      minimizeWindow: () => void
+      toggleMaximizeWindow: () => void
+      closeWindow: () => void
       sendConnectionAlive: () => void
       onSettingsUpdate: (callback: (settings: any) => void) => void
       onChatHistoryUpdate: (callback: (history: any[]) => void) => void

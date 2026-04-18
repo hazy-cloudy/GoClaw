@@ -69,11 +69,11 @@ export function ConfigPage() {
   }
 
   return (
-    <div className="flex-1 flex flex-col bg-background">
+    <div className="flex-1 flex flex-col bg-gradient-to-b from-background to-amber-50/20">
       {/* Header */}
-      <header className="flex items-center justify-between px-6 py-4 border-b border-border">
+      <header className="flex items-center justify-between px-6 py-4 border-b border-border/70 bg-white/70 backdrop-blur-sm">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-gray-400 to-gray-600 flex items-center justify-center text-white">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center text-white shadow-sm">
             <Settings className="w-5 h-5" />
           </div>
           <div>
@@ -102,7 +102,7 @@ export function ConfigPage() {
           <Button
             onClick={handleSave}
             disabled={!hasChanges || updateConfig.isMutating}
-            className="bg-gradient-to-r from-orange-400 to-pink-500 hover:from-orange-500 hover:to-pink-600 text-white border-0"
+            className="bg-amber-700 hover:bg-amber-800 text-amber-50 border-0"
           >
             {updateConfig.isMutating ? <Spinner className="w-4 h-4 mr-2" /> : <Save className="w-4 h-4 mr-2" />}
             保存配置
@@ -111,14 +111,14 @@ export function ConfigPage() {
       </header>
 
       {/* Tabs */}
-      <div className="px-6 py-3 border-b border-border">
+      <div className="px-6 py-3 border-b border-border/70 bg-white/50">
         <div className="flex items-center gap-2">
           <button
             onClick={() => setActiveTab("visual")}
             className={cn(
               "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors",
               activeTab === "visual"
-                ? "bg-foreground text-background"
+                ? "bg-amber-900 text-amber-50"
                 : "text-muted-foreground hover:bg-accent"
             )}
           >
@@ -130,7 +130,7 @@ export function ConfigPage() {
             className={cn(
               "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors",
               activeTab === "raw"
-                ? "bg-foreground text-background"
+                ? "bg-amber-900 text-amber-50"
                 : "text-muted-foreground hover:bg-accent"
             )}
           >
@@ -149,7 +149,7 @@ export function ConfigPage() {
         ) : activeTab === "visual" ? (
           <div className="max-w-2xl space-y-6">
             {/* Gateway Status Card */}
-            <div className="p-4 rounded-2xl border border-border bg-muted/30">
+            <div className="p-4 rounded-2xl border border-border/80 bg-white shadow-sm">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-green-400 to-emerald-500 flex items-center justify-center">
@@ -178,7 +178,7 @@ export function ConfigPage() {
             </div>
 
             {/* Agent Settings */}
-            <div className="p-4 rounded-2xl border border-border">
+            <div className="p-4 rounded-2xl border border-border/80 bg-white shadow-sm">
               <h3 className="font-medium text-foreground mb-4 flex items-center gap-2">
                 <span className="w-6 h-6 rounded-lg bg-blue-100 flex items-center justify-center text-blue-600 text-sm">🤖</span>
                 智能体设置
@@ -207,7 +207,7 @@ export function ConfigPage() {
             </div>
 
             {/* Runtime Settings */}
-            <div className="p-4 rounded-2xl border border-border">
+            <div className="p-4 rounded-2xl border border-border/80 bg-white shadow-sm">
               <h3 className="font-medium text-foreground mb-4 flex items-center gap-2">
                 <span className="w-6 h-6 rounded-lg bg-orange-100 flex items-center justify-center text-orange-600 text-sm">⚡</span>
                 运行时设置
@@ -257,7 +257,7 @@ export function ConfigPage() {
             </div>
 
             {/* Launcher Settings */}
-            <div className="p-4 rounded-2xl border border-border">
+            <div className="p-4 rounded-2xl border border-border/80 bg-white shadow-sm">
               <h3 className="font-medium text-foreground mb-4 flex items-center gap-2">
                 <span className="w-6 h-6 rounded-lg bg-purple-100 flex items-center justify-center text-purple-600 text-sm">🚀</span>
                 启动器设置
@@ -317,7 +317,7 @@ export function ConfigPage() {
                 setRawJson(e.target.value)
                 setHasChanges(true)
               }}
-              className="w-full h-[500px] px-4 py-3 border border-border rounded-xl bg-muted/30 text-foreground font-mono text-sm outline-none focus:ring-2 focus:ring-gray-400/30 resize-none"
+              className="w-full h-[500px] px-4 py-3 border border-border rounded-xl bg-white text-foreground font-mono text-sm outline-none focus:ring-2 focus:ring-amber-400/30 resize-none"
               placeholder="请输入有效的 JSON 配置..."
             />
             <p className="text-xs text-muted-foreground mt-2">

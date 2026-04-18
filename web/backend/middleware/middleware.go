@@ -5,11 +5,51 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/logger"
 )
+
+// CORS adds Cross-Origin Resource Sharing headers for API requests.
+func CORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if len(r.URL.Path) >= 5 && r.URL.Path[:5] == "/api/" {
+			origin := strings.TrimSpace(r.Header.Get("Origin"))
+			allowedOrigin := origin != "" && isAllowedCORSOrigin(origin)
+			if origin != "" {
+				if allowedOrigin {
+					w.Header().Set("Access-Control-Allow-Origin", origin)
+					w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+					w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+				}
+				w.Header().Add("Vary", "Origin")
+			}
+
+			if r.Method == http.MethodOptions && allowedOrigin && strings.TrimSpace(r.Header.Get("Access-Control-Request-Method")) != "" {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func isAllowedCORSOrigin(origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+
+	host := strings.ToLower(u.Hostname())
+	if host == "localhost" || host == "127.0.0.1" {
+		return u.Scheme == "http" || u.Scheme == "https"
+	}
+
+	return false
+}
 
 // JSONContentType sets the Content-Type header to application/json for
 // API requests handled by the wrapped handler.

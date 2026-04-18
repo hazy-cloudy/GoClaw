@@ -82,6 +82,22 @@ func TestLauncherAuthLoginAndStatus(t *testing.T) {
 			t.Fatalf("authenticated response should omit token_help: %s", rec.Body.String())
 		}
 	})
+
+	t.Run("status_authenticated_with_bearer", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/auth/status", nil)
+		req.Header.Set("Authorization", "Bearer "+tok)
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status code = %d", rec.Code)
+		}
+		if !bytes.Contains(rec.Body.Bytes(), []byte(`"authenticated":true`)) {
+			t.Fatalf("body = %s", rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), "token_help") {
+			t.Fatalf("authenticated response should omit token_help: %s", rec.Body.String())
+		}
+	})
 }
 
 func TestLauncherAuthLogoutRequiresPostAndJSON(t *testing.T) {

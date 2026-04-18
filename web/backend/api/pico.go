@@ -15,6 +15,10 @@ import (
 
 // registerPicoRoutes binds Pico Channel management endpoints to the ServeMux.
 func (h *Handler) registerPicoRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/pet/token", h.handleGetPicoToken)
+	mux.HandleFunc("POST /api/pet/token", h.handleRegenPicoToken)
+	mux.HandleFunc("POST /api/pet/setup", h.handlePicoSetup)
+
 	mux.HandleFunc("GET /api/pico/token", h.handleGetPicoToken)
 	mux.HandleFunc("POST /api/pico/token", h.handleRegenPicoToken)
 	mux.HandleFunc("POST /api/pico/setup", h.handlePicoSetup)
@@ -22,6 +26,7 @@ func (h *Handler) registerPicoRoutes(mux *http.ServeMux) {
 	// WebSocket proxy: forward /pico/ws to gateway
 	// This allows the frontend to connect via the same port as the web UI,
 	// avoiding the need to expose extra ports for WebSocket communication.
+	mux.HandleFunc("GET /pet/ws", h.handleWebSocketProxy())
 	mux.HandleFunc("GET /pico/ws", h.handleWebSocketProxy())
 }
 
@@ -56,8 +61,14 @@ func (h *Handler) createWsProxy(origProtocol string, token string) *httputil.Rev
 func (h *Handler) handleWebSocketProxy() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		gateway.mu.Lock()
+		if gateway.pidData == nil {
+			if pd := readGatewayPidData(h.configPath); pd != nil {
+				logger.Infof("handleWebSocketProxy: found pidData, port=%d, pid=%d", pd.Port, pd.PID)
+				gateway.pidData = pd
+			}
+		}
 		ensurePicoTokenCachedLocked(h.configPath)
-		gatewayAvailable := gateway.pidData != nil
+		gatewayAvailable := gateway.picoToken != ""
 		gateway.mu.Unlock()
 
 		if !gatewayAvailable {
@@ -75,7 +86,7 @@ func (h *Handler) handleWebSocketProxy() http.HandlerFunc {
 			}
 		}
 
-		logger.Warnf("Invalid Pico token: %v", prot)
+		logger.Warnf("Rejected WebSocket proxy request with invalid Pico token")
 		http.Error(w, "Invalid Pico token", http.StatusForbidden)
 	}
 }
@@ -88,6 +99,10 @@ func (h *Handler) handleGetPicoToken(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
 		return
+	}
+
+	if token := loadPicoTokenFromSecurityConfig(h.configPath); token != "" {
+		cfg.Channels.Pico.SetToken(token)
 	}
 
 	wsURL := h.buildWsURL(r)

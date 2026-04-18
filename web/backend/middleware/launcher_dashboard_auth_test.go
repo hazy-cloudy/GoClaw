@@ -35,6 +35,8 @@ func TestLauncherDashboardAuth_AllowsPublicPaths(t *testing.T) {
 	}{
 		{http.MethodGet, "/launcher-login", http.StatusTeapot},
 		{http.MethodGet, "/assets/index.js", http.StatusTeapot},
+		{http.MethodGet, "/pico/ws", http.StatusTeapot},
+		{http.MethodGet, "/pico/ws/", http.StatusTeapot},
 		{http.MethodPost, "/api/auth/login", http.StatusTeapot},
 		{http.MethodGet, "/api/auth/status", http.StatusTeapot},
 		{http.MethodPost, "/api/auth/logout", http.StatusTeapot},
@@ -158,5 +160,39 @@ func TestLauncherDashboardAuth_CookieAndBearer(t *testing.T) {
 	h.ServeHTTP(rec2, req2)
 	if rec2.Code != http.StatusOK {
 		t.Fatalf("bearer auth: status = %d", rec2.Code)
+	}
+}
+
+func TestLauncherDashboardAuth_CrossOriginAPIRequiresBearer(t *testing.T) {
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = 0xcd
+	}
+	token := "dashboard-secret-cross-origin"
+	cookieVal := SessionCookieValue(key, token)
+	cfg := LauncherDashboardAuthConfig{ExpectedCookie: cookieVal, Token: token}
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	h := LauncherDashboardAuth(cfg, next)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	req.Host = "127.0.0.1:18800"
+	req.Header.Set("Origin", "http://127.0.0.1:3000")
+	req.AddCookie(&http.Cookie{Name: LauncherDashboardCookieName, Value: cookieVal})
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("cross-origin cookie auth: status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	req2.Host = "127.0.0.1:18800"
+	req2.Header.Set("Origin", "http://127.0.0.1:3000")
+	req2.Header.Set("Authorization", "Bearer "+token)
+	h.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("cross-origin bearer auth: status = %d", rec2.Code)
 	}
 }

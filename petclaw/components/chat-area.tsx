@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, type CSSProperties } from "react"
 import { Plus, Mic, Send, ChevronDown, Lightbulb, PenTool, Search, FileText, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -45,7 +45,8 @@ export function ChatArea() {
     isTyping, 
     error, 
     sendMessage, 
-    reconnect 
+    reconnect,
+    clearError,
   } = useChat()
 
   // 自动滚动到底部
@@ -74,15 +75,15 @@ export function ChatArea() {
   const hasMessages = messages.length > 0
 
   return (
-    <div className="flex-1 flex flex-col bg-background">
+    <div className="flex-1 flex flex-col bg-background" style={{ WebkitAppRegion: "no-drag" } as CSSProperties}>
       {/* Header */}
-      <header className="flex items-center justify-between px-6 py-3 border-b border-border">
+      <header className="flex items-center justify-between px-6 py-4 border-b border-border/70 bg-card">
         <div className="flex items-center gap-2">
           <span className={cn(
             "w-2 h-2 rounded-full",
             isConnected ? "bg-green-500" : "bg-red-500"
           )}></span>
-          <span className="text-sm text-muted-foreground">
+          <span className="text-sm text-muted-foreground font-medium">
             {isConnected ? "已连接" : "未连接"}
           </span>
           {!isConnected && (
@@ -99,13 +100,13 @@ export function ChatArea() {
         </div>
 
         {/* Tab Switcher */}
-        <div className="flex items-center bg-muted rounded-full p-1">
+        <div className="flex items-center bg-muted/80 rounded-full p-1 border border-border/70">
           <button
             onClick={() => setActiveTab("聊天")}
             className={cn(
               "px-4 py-1.5 rounded-full text-sm font-medium transition-colors",
               activeTab === "聊天"
-                ? "bg-background text-foreground shadow-sm"
+                ? "bg-white text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground"
             )}
           >
@@ -126,13 +127,13 @@ export function ChatArea() {
 
         {/* Upgrade */}
         <div className="flex items-center gap-3">
-          <span className="text-sm text-muted-foreground">Free</span>
+          <span className="text-sm text-muted-foreground">PetClaw AI</span>
           <Button
             variant="outline"
             size="sm"
-            className="text-orange-500 border-orange-500 hover:bg-orange-50 hover:text-orange-600"
+            className="text-amber-700 border-amber-300 bg-amber-50 hover:bg-amber-100 hover:text-amber-800"
           >
-            升级
+            体验增强版
           </Button>
         </div>
       </header>
@@ -141,8 +142,19 @@ export function ChatArea() {
       <div className="flex-1 flex flex-col overflow-hidden">
         {hasMessages ? (
           // Chat Messages
-          <div className="flex-1 overflow-auto px-6 py-4">
+          <div className="flex-1 overflow-auto px-6 py-5">
             <div className="max-w-3xl mx-auto space-y-4">
+              {error && (
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  <span>{error}</span>
+                  <button
+                    onClick={clearError}
+                    className="rounded-md px-2 py-1 text-red-700 hover:bg-red-100"
+                  >
+                    关闭
+                  </button>
+                </div>
+              )}
               {messages.map((msg) => (
                 <div
                   key={msg.id}
@@ -155,10 +167,10 @@ export function ChatArea() {
                     className={cn(
                       "max-w-[80%] rounded-2xl px-4 py-3",
                       msg.role === "user"
-                        ? "bg-foreground text-background"
-                        : "bg-muted text-foreground"
-                    )}
-                  >
+                        ? "bg-amber-900 text-amber-50"
+                        : "bg-white border border-border/70 text-foreground shadow-sm"
+                     )}
+                   >
                     <p className="whitespace-pre-wrap">{msg.content}</p>
                     {msg.streaming && (
                       <span className="inline-block w-2 h-4 ml-1 bg-current animate-pulse" />
@@ -203,9 +215,10 @@ export function ChatArea() {
             </div>
 
             {/* Title */}
-            <h1 className="text-2xl font-medium text-foreground mb-8">
+            <h1 className="text-3xl font-semibold text-foreground mb-3 tracking-tight">
               今天有什么可以帮你?
             </h1>
+            <p className="mb-8 text-sm text-muted-foreground">可以让桌宠帮你处理日常任务、写作、代码与计划安排。</p>
 
             {/* Error Message */}
             {error && (
@@ -222,7 +235,7 @@ export function ChatArea() {
                   <button
                     key={index}
                     onClick={() => handleSuggestionClick(item.title, item.description)}
-                    className="flex items-start gap-3 p-4 rounded-xl border border-border bg-background hover:bg-accent transition-colors text-left"
+                    className="flex items-start gap-3 p-4 rounded-2xl border border-border/80 bg-white hover:bg-accent/60 transition-colors text-left shadow-sm"
                   >
                     <Icon className={cn("w-5 h-5 mt-0.5", item.iconColor)} />
                     <div>
@@ -240,9 +253,9 @@ export function ChatArea() {
       </div>
 
       {/* Input Area */}
-      <div className="px-6 pb-6">
+      <div className="px-6 pb-6 pt-2">
         <div className="max-w-3xl mx-auto">
-          <div className="border border-border rounded-2xl bg-background shadow-sm">
+          <div className="border border-border/80 rounded-2xl bg-white shadow-[0_10px_30px_-20px_rgba(0,0,0,0.45)]">
             {/* Text Input */}
             <div className="px-4 py-3">
               <input
@@ -274,7 +287,7 @@ export function ChatArea() {
                   size="icon"
                   onClick={handleSend}
                   disabled={!message.trim() || !isConnected}
-                  className="rounded-full bg-foreground text-background hover:bg-foreground/90 w-9 h-9 disabled:opacity-50"
+                  className="rounded-full bg-amber-700 text-amber-50 hover:bg-amber-800 w-9 h-9 disabled:opacity-50"
                 >
                   {isTyping ? (
                     <Spinner className="w-4 h-4" />

@@ -7,7 +7,10 @@ const _geist = Geist({ subsets: ["latin"] });
 const _geistMono = Geist_Mono({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: 'PetClaw AI',
+  title: {
+    default: 'PetClaw AI',
+    template: '%s - PetClaw AI',
+  },
   description: 'AI Chat Assistant',
   generator: 'v0.app',
   icons: {
@@ -34,11 +37,13 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode
 }>) {
+  const enableVercelAnalytics = process.env.NEXT_PUBLIC_ENABLE_VERCEL_ANALYTICS === 'true'
+
   return (
-    <html lang="zh-CN" className="bg-background">
-      <body className="font-sans antialiased">
+    <html lang="zh-CN" className="bg-transparent">
+      <body className="bg-transparent font-sans antialiased">
         {children}
-        {process.env.NODE_ENV === 'production' && <Analytics />}
+        {enableVercelAnalytics && <Analytics />}
       </body>
     </html>
   )

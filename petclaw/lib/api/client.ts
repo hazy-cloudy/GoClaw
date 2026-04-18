@@ -1,4 +1,10 @@
-import { API_BASE_URL, API_ENDPOINTS } from './config'
+import {
+  API_ENDPOINTS,
+  getApiBaseUrl,
+  getAuthRequestCredentials,
+  withLauncherAuthHeader,
+} from './config'
+import { fetchWithAuthRetry } from './auth-bootstrap'
 
 // API 请求错误类
 export class ApiError extends Error {
@@ -17,7 +23,7 @@ async function request<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const url = `${API_BASE_URL}${endpoint}`
+  const url = `${getApiBaseUrl()}${endpoint}`
   
   const defaultHeaders: HeadersInit = {
     'Content-Type': 'application/json',
@@ -25,14 +31,15 @@ async function request<T>(
 
   const config: RequestInit = {
     ...options,
-    headers: {
+    headers: withLauncherAuthHeader({
       ...defaultHeaders,
       ...options.headers,
-    },
-    credentials: 'include', // 携带 cookie 用于认证
+    }),
+    credentials: getAuthRequestCredentials(url),
   }
 
-  const response = await fetch(url, config)
+  const shouldRetryAuth = !endpoint.startsWith('/api/auth/')
+  const response = await fetchWithAuthRetry(url, config, shouldRetryAuth)
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}))
@@ -70,14 +77,25 @@ export const authApi = {
 
 // 网关 API
 export const gatewayApi = {
-  status: () =>
-    request<{
-      running: boolean
-      state: 'stopped' | 'starting' | 'running' | 'stopping' | 'restarting'
+  status: async () => {
+    const raw = await request<{
+      gateway_status?: 'stopped' | 'starting' | 'running' | 'stopping' | 'restarting' | 'error'
       pid?: number
-      uptime?: number
-      restartRequired?: boolean
-    }>(API_ENDPOINTS.GATEWAY.STATUS),
+      gateway_restart_required?: boolean
+      gateway_start_allowed?: boolean
+      gateway_start_reason?: string
+    }>(API_ENDPOINTS.GATEWAY.STATUS)
+
+    const state = raw.gateway_status === 'error' ? 'stopped' : (raw.gateway_status || 'stopped')
+    return {
+      running: state === 'running',
+      state,
+      pid: raw.pid,
+      restartRequired: Boolean(raw.gateway_restart_required),
+      startAllowed: raw.gateway_start_allowed,
+      startReason: raw.gateway_start_reason,
+    }
+  },
 
   start: () =>
     request<{ success: boolean }>(API_ENDPOINTS.GATEWAY.START, { method: 'POST' }),
@@ -109,8 +127,8 @@ export const modelsApi = {
 
   setDefault: (id: string) =>
     request<{ success: boolean }>(API_ENDPOINTS.MODELS.DEFAULT, {
-      method: 'PUT',
-      body: JSON.stringify({ id }),
+      method: 'POST',
+      body: JSON.stringify({ model_name: id }),
     }),
 
   create: (model: Omit<Model, 'id' | 'isDefault' | 'hasCredentials'>) =>

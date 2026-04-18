@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { getWebSocketInstance, type ChatMessage, type WSEvent } from '@/lib/api'
+import { ensureBackendReadyForChat } from '@/lib/api/bootstrap'
 
 export interface UseChatOptions {
   onMessage?: (message: ChatMessage) => void
@@ -17,12 +18,34 @@ export function useChat(options: UseChatOptions = {}) {
   const wsRef = useRef(getWebSocketInstance())
   const optionsRef = useRef(options)
 
-  // 更新 options ref
+  const connectWithBootstrap = useCallback(async () => {
+    setError(null)
+    setIsTyping(false)
+
+    const bootstrap = await ensureBackendReadyForChat()
+    if (!bootstrap.ok) {
+      const reason = bootstrap.reason || 'Backend not ready for chat'
+      setIsConnected(false)
+      setError(reason)
+      optionsRef.current.onConnectionChange?.(false)
+      optionsRef.current.onError?.(reason)
+      return
+    }
+
+    wsRef.current.resetReconnectAttempts()
+
+    try {
+      await wsRef.current.connect()
+    } catch (err) {
+      setError('连接失败')
+      console.error('WebSocket connection failed:', err)
+    }
+  }, [])
+
   useEffect(() => {
     optionsRef.current = options
   }, [options])
 
-  // WebSocket 事件处理
   useEffect(() => {
     const ws = wsRef.current
 
@@ -36,6 +59,7 @@ export function useChat(options: UseChatOptions = {}) {
 
         case 'disconnected':
           setIsConnected(false)
+          setIsTyping(false)
           optionsRef.current.onConnectionChange?.(false)
           break
 
@@ -43,7 +67,6 @@ export function useChat(options: UseChatOptions = {}) {
           if (typeof event.data === 'object' && event.data) {
             const message = event.data as ChatMessage
             setMessages((prev) => {
-              // 检查是否是流式更新（相同 id）
               const existingIndex = prev.findIndex((m) => m.id === message.id)
               if (existingIndex >= 0) {
                 const newMessages = [...prev]
@@ -65,31 +88,43 @@ export function useChat(options: UseChatOptions = {}) {
         case 'error':
           const errorMsg = typeof event.data === 'string' ? event.data : 'Unknown error'
           setError(errorMsg)
+          setIsTyping(false)
           optionsRef.current.onError?.(errorMsg)
           break
 
         case 'reconnecting':
           setError('正在重新连接...')
+          setIsTyping(false)
+          break
+
+        case 'emotion_change':
+          break
+
+        case 'action_trigger':
           break
       }
     }
 
     const unsubscribe = ws.subscribe(handleEvent)
 
-    // 自动连接
-    ws.connect().catch((err) => {
-      setError('连接失败')
-      console.error('WebSocket connection failed:', err)
+    connectWithBootstrap().catch((err) => {
+      const message = err instanceof Error ? err.message : 'Backend bootstrap failed'
+      setError(message)
+      console.error('Chat bootstrap failed:', err)
     })
 
     return () => {
       unsubscribe()
     }
-  }, [])
+  }, [connectWithBootstrap])
 
-  // 发送消息
   const sendMessage = useCallback((content: string) => {
     if (!content.trim()) return
+
+    if (!wsRef.current.isConnected) {
+      setError('当前连接不可用，请先重连后再发送')
+      return
+    }
 
     const userMessage: ChatMessage = {
       id: `user-${Date.now()}`,
@@ -105,18 +140,23 @@ export function useChat(options: UseChatOptions = {}) {
     wsRef.current.send(content.trim())
   }, [])
 
-  // 清空消息
   const clearMessages = useCallback(() => {
     setMessages([])
   }, [])
 
-  // 手动重连
   const reconnect = useCallback(() => {
     setError(null)
-    wsRef.current.connect().catch((err) => {
+    setIsTyping(false)
+    wsRef.current.disconnect()
+
+    connectWithBootstrap().catch((err) => {
       setError('重新连接失败')
       console.error('Reconnection failed:', err)
     })
+  }, [connectWithBootstrap])
+
+  const clearError = useCallback(() => {
+    setError(null)
   }, [])
 
   return {
@@ -127,5 +167,6 @@ export function useChat(options: UseChatOptions = {}) {
     sendMessage,
     clearMessages,
     reconnect,
+    clearError,
   }
 }
