@@ -1,4 +1,4 @@
-﻿const { app, BrowserWindow, ipcMain, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, screen } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -9,6 +9,10 @@ let settingsWindow = null;
 // 璁剧疆鐢ㄦ埛鏁版嵁鐩綍浠ヨВ鍐虫潈闄愰棶棰?
 const userDataPath = path.join(os.homedir(), '.goclaw');
 app.setPath('userData', userDataPath);
+
+if (!fs.existsSync(userDataPath)) {
+  fs.mkdirSync(userDataPath, { recursive: true });
+}
 
 // 鍒涘缓鏃ュ織鏂囦欢
 const logFilePath = path.join(userDataPath, 'logs.txt');
@@ -66,7 +70,9 @@ function createPetWindow() {
     }
   });
 
-  petWindow.loadURL(rendererBaseUrl);
+  petWindow.loadURL(rendererBaseUrl).catch((err) => {
+    logToFile(`[PET WINDOW] loadURL failed: ${String(err)}`);
+  });
   
   petWindow.once('ready-to-show', () => {
     petWindow.show();
@@ -154,8 +160,8 @@ ipcMain.on('open-settings', () => {
 });
 
 // 鎺ユ敹鏉ヨ嚜娓叉煋杩涚▼鐨勬棩蹇?
-ipcMain.on('renderer-log', (event, { level, args }) => {
-  const message = args.map(arg => {
+ipcMain.on('renderer-log', (_event, { level, args }) => {
+  const message = args.map((arg) => {
     if (typeof arg === 'object') {
       return JSON.stringify(arg);
     }
@@ -170,11 +176,13 @@ ipcMain.on('renderer-log', (event, { level, args }) => {
 });
 
 ipcMain.on('minimize-settings', () => {
-  if (settingsWindow) settingsWindow.minimize();
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.minimize();
+  }
 });
 
 ipcMain.on('maximize-settings', () => {
-  if (settingsWindow) {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
     if (settingsWindow.isMaximized()) {
       settingsWindow.unmaximize();
     } else {
@@ -184,22 +192,24 @@ ipcMain.on('maximize-settings', () => {
 });
 
 ipcMain.on('close-settings', () => {
-  if (settingsWindow) settingsWindow.close();
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.close();
+  }
 });
 
-ipcMain.on('settings-changed', (event, settings) => {
+ipcMain.on('settings-changed', (_event, settings) => {
   if (petWindow && !petWindow.isDestroyed()) {
     petWindow.webContents.send('settings-updated', settings);
   }
 });
 
-ipcMain.on('chat-history', (event, history) => {
+ipcMain.on('chat-history', (_event, history) => {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     settingsWindow.webContents.send('chat-history-updated', history);
   }
 });
 
-ipcMain.on('show-bubble', (event, data) => {
+ipcMain.on('show-bubble', (_event, data) => {
   if (petWindow && !petWindow.isDestroyed()) {
     petWindow.webContents.send('bubble-show', data);
   }

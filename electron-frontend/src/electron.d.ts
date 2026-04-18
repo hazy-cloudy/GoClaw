@@ -3,6 +3,7 @@ export {}
 interface BubblePayload {
   text: string | null
   emotion?: string
+  level?: string
   audio?: string
   animation?: string
   animationHints?: string[]
@@ -17,7 +18,10 @@ declare global {
       closeSettings: () => void
       sendSettingsChange: (settings: any) => void
       sendChatHistory: (history: any[]) => void
-      showBubble: (payload: BubblePayload) => void
+      showBubble: {
+        (payload: BubblePayload): void
+        (text: string | null, emotion: string, audio?: string): void
+      }
       sendConnectionAlive: () => void
       onSettingsUpdate: (callback: (settings: any) => void) => void
       onChatHistoryUpdate: (callback: (history: any[]) => void) => void
