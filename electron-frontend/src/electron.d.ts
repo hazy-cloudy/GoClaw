@@ -1,20 +1,32 @@
-export {}
+interface BubblePayload {
+  text: string | null
+  emotion?: string
+  level?: string
+  animation?: string
+  animationHints?: string[]
+  audio?: string
+}
 
 declare global {
   interface Window {
     electronAPI?: {
-      openDashboard: () => void
-      openOnboarding: () => void
-      setOnboardingMode: (enabled: boolean) => void
-      getBackendBaseUrl: () => string
-      minimizeWindow: () => void
-      toggleMaximizeWindow: () => void
-      closeWindow: () => void
-      showBubble: (text: string | null, emotion: string, audio?: string) => void
+      openSettings: () => void
+      minimizeSettings: () => void
+      maximizeSettings: () => void
+      closeSettings: () => void
+      sendSettingsChange: (settings: any) => void
+      sendChatHistory: (history: any[]) => void
+      showBubble: {
+        (payload: BubblePayload): void
+        (text: string | null, emotion: string, audio?: string): void
+      }
       sendConnectionAlive: () => void
-      setClickThrough: (enabled: boolean) => void
-      onBubbleShow: (callback: (data: { text: string | null; emotion?: string; audio?: string }) => void) => void
+      onSettingsUpdate: (callback: (settings: any) => void) => void
+      onChatHistoryUpdate: (callback: (history: any[]) => void) => void
+      onBubbleShow: (callback: (data: BubblePayload) => void) => void
       onConnectionAlive: (callback: () => void) => void
     }
   }
 }
+
+export {}

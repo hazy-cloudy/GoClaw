@@ -41,7 +41,7 @@ interface OnboardingWizardProps {
   onFinish: () => void
 }
 
-const steps = ["契约确认", "情报录入", "桌宠人格"]
+const steps = ["情报录入", "桌宠人格", "契约确认"]
 const milestones = ["认识你", "理解你", "陪伴你"]
 
 const setupTemplate: SetupTask[] = [
@@ -238,9 +238,6 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
       return `这次没连上，不是你的问题。${setupError}，我们可以再试一次。`
     }
     if (step === 0) {
-      return "先把你的喜好悄悄告诉我，召唤时我会把环境一次性收拾好。"
-    }
-    if (step === 1) {
       if (icsFileName) {
         return `收到课表 ${icsFileName}，我会尽量避开上课时段提醒你。`
       }
@@ -249,8 +246,11 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
       }
       return `已记录你的${profile.role}情报，我会按${sleepHour.toString().padStart(2, "0")}:00的作息来安排提醒。`
     }
-    const calling = customNickname.trim() || nickname
-    return `收到！以后我会叫你“${calling}”，用${personalityTone}模式陪你稳稳推进任务。`
+    if (step === 1) {
+      const calling = customNickname.trim() || nickname
+      return `收到！以后我会叫你“${calling}”，用${personalityTone}模式陪你稳稳推进任务。`
+    }
+    return "先把你的喜好悄悄告诉我，召唤时我会把环境一次性收拾好。"
   }, [customNickname, icsFileName, loadingLineIndex, nickname, personalityTone, profile.role, selectedBreakers.length, setupError, setupRunning, sleepHour, step])
 
   const runSetup = async (): Promise<boolean> => {
@@ -549,7 +549,7 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6 md:px-8">
-            {step === 0 && (
+            {step === 2 && (
               <div className="space-y-5">
                 <div className={`rounded-2xl border border-white/70 bg-[linear-gradient(120deg,rgba(255,255,255,0.9),rgba(255,246,228,0.82),rgba(255,238,251,0.82))] p-5 ${moodTheme.cardGlow}`}>
                   <div className="mb-2 flex items-center gap-2 text-xl font-semibold text-gradient-warm text-shadow-soft">
@@ -585,7 +585,7 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
               </div>
             )}
 
-            {step === 1 && (
+            {step === 0 && (
               <div className="space-y-5">
                 <div className={`rounded-2xl border border-white/70 bg-[linear-gradient(120deg,rgba(255,255,255,0.9),rgba(238,248,255,0.87),rgba(255,245,231,0.86))] p-4 text-sm text-[#6a5644] ${moodTheme.cardGlow}`}>
                   这些信息会变成你的情报档案：桌宠会按你的作息、课程压力和焦虑点来调节提醒节奏与语气。
@@ -722,30 +722,10 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
                   </div>
                 </div>
 
-                <div className={`rounded-2xl border border-white/70 bg-[linear-gradient(140deg,rgba(255,255,255,0.92),rgba(235,252,255,0.88),rgba(240,244,255,0.86))] p-5 ${moodTheme.cardGlow}`}>
-                  <p className="mb-2 text-xl font-semibold text-gradient-primary">专属学习节奏蓝图</p>
-                  <p className="mb-3 text-sm text-gradient-milestone">用于方案 1：让提醒时间更像你的真实学习节奏。</p>
-                  <div className="rounded-xl border border-white/80 bg-white/80 p-3 text-sm text-gradient-primary shadow-[inset_0_0_0_1px_rgba(255,255,255,0.72)]">
-                    <p className="font-medium">{learningRhythmInsight.summary}</p>
-                    <p className="mt-2">高专注窗口：{learningRhythmInsight.focusWindows.join(" / ")}</p>
-                    <p className="mt-1">静默策略：{learningRhythmInsight.quietWindows.join("；")}</p>
-                  </div>
-                </div>
-
-                <div className={`rounded-2xl border border-white/70 bg-[linear-gradient(140deg,rgba(255,255,255,0.92),rgba(255,238,248,0.88),rgba(236,244,255,0.86))] p-5 ${moodTheme.cardGlow}`}>
-                  <p className="mb-2 text-xl font-semibold text-gradient-primary">将写入桌宠的压力分层策略</p>
-                  <p className="mb-3 text-sm text-gradient-milestone">用于方案 2：按压力等级切换提醒频率与话术强度。</p>
-                  <div className="space-y-2 rounded-xl border border-white/80 bg-white/80 p-3 text-sm text-gradient-primary shadow-[inset_0_0_0_1px_rgba(255,255,255,0.72)]">
-                    <p>压力等级：<span className="font-semibold">{pressurePlanInsight.level}</span></p>
-                    <p>提醒间隔（分钟）：{pressurePlanInsight.reminderIntervalsMinutes.join(" / ")}</p>
-                    <p>策略：{pressurePlanInsight.strategy}</p>
-                    <p>话术风格：{pressurePlanInsight.toneGuide}</p>
-                  </div>
-                </div>
               </div>
             )}
 
-            {step === 2 && (
+            {step === 1 && (
               <div className="space-y-5">
                 <div className={`rounded-2xl border border-white/70 bg-[linear-gradient(130deg,rgba(255,255,255,0.92),rgba(255,245,230,0.86),rgba(236,248,255,0.84))] p-5 ${moodTheme.cardGlow}`}>
                   <p className="mb-3 flex items-center gap-2 text-2xl font-semibold text-gradient-warm text-shadow-soft"><Cat className="h-5 w-5 animate-text-shimmer" />嘴替流派（Personality）</p>
