@@ -1,4 +1,4 @@
-import { API_ENDPOINTS, getApiBaseUrl, withLauncherAuthHeader } from './config'
+import { API_ENDPOINTS, getApiBaseUrl, withLauncherAuthRequest } from './config'
 import { ensureLauncherAuthSession, fetchWithAuthRetry } from './auth-bootstrap'
 
 interface GatewayStatusResponse {
@@ -79,11 +79,7 @@ async function waitGatewayRunning(maxAttempts = 12, delayMs = 800): Promise<bool
 
 async function isWsProxyReady(wsPath: string): Promise<boolean> {
   const url = `${getApiBaseUrl()}${wsPath}?session_id=preflight`
-  const res = await fetch(url, {
-    method: 'GET',
-    headers: withLauncherAuthHeader(),
-    credentials: 'include',
-  })
+  const res = await fetch(url, withLauncherAuthRequest(url, { method: 'GET' }))
 
   // Without upgrade headers this endpoint is expected to return 400/403,
   // but should not return 503 when gateway proxy is unavailable.
@@ -243,7 +239,10 @@ export async function ensureBackendReadyForChat(): Promise<BackendBootstrapResul
 
   const status = await getGatewayStatus()
   if (status.gateway_status === 'running') {
-    return { ok: true }
+    const wsReady = await ensureWsProxyReady()
+    return wsReady
+      ? { ok: true }
+      : { ok: false, reason: 'websocket proxy unavailable (gateway not ready)' }
   }
 
   await ensureDefaultModelIfNeeded(status.gateway_start_reason)

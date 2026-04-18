@@ -125,6 +125,14 @@ func (h *launcherAuthHandlers) handleStatus(w http.ResponseWriter, r *http.Reque
 	if c, err := r.Cookie(middleware.LauncherDashboardCookieName); err == nil {
 		ok = subtle.ConstantTimeCompare([]byte(c.Value), []byte(h.sessionCookie)) == 1
 	}
+	if !ok {
+		auth := r.Header.Get("Authorization")
+		const prefix = "Bearer "
+		if strings.HasPrefix(auth, prefix) {
+			token := strings.TrimSpace(auth[len(prefix):])
+			ok = len(token) == len(h.token) && subtle.ConstantTimeCompare([]byte(token), []byte(h.token)) == 1
+		}
+	}
 	if ok {
 		_, _ = w.Write([]byte(`{"authenticated":true}`))
 		return

@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"net/http"
+	"net/url"
 	"path"
 	"strings"
 	"time"
@@ -202,20 +203,61 @@ func isPublicLauncherDashboardStatic(method, p string) bool {
 }
 
 func validLauncherDashboardAuth(r *http.Request, cfg LauncherDashboardAuthConfig) bool {
-	if c, err := r.Cookie(LauncherDashboardCookieName); err == nil {
-		if subtle.ConstantTimeCompare([]byte(c.Value), []byte(cfg.ExpectedCookie)) == 1 {
-			return true
-		}
+	if isCrossOriginAPIRequest(r) {
+		return validLauncherDashboardBearer(r, cfg.Token)
 	}
+
+	return validLauncherDashboardSessionCookie(r, cfg.ExpectedCookie) || validLauncherDashboardBearer(r, cfg.Token)
+}
+
+func validLauncherDashboardSessionCookie(r *http.Request, expectedCookie string) bool {
+	if c, err := r.Cookie(LauncherDashboardCookieName); err == nil {
+		return subtle.ConstantTimeCompare([]byte(c.Value), []byte(expectedCookie)) == 1
+	}
+
+	return false
+}
+
+func validLauncherDashboardBearer(r *http.Request, token string) bool {
 	auth := r.Header.Get("Authorization")
 	const prefix = "Bearer "
 	if strings.HasPrefix(auth, prefix) {
-		token := strings.TrimSpace(auth[len(prefix):])
-		if len(token) == len(cfg.Token) && subtle.ConstantTimeCompare([]byte(token), []byte(cfg.Token)) == 1 {
+		bearer := strings.TrimSpace(auth[len(prefix):])
+		if len(bearer) == len(token) && subtle.ConstantTimeCompare([]byte(bearer), []byte(token)) == 1 {
 			return true
 		}
 	}
+
 	return false
+}
+
+func isCrossOriginAPIRequest(r *http.Request) bool {
+	p := canonicalAuthPath(r.URL.Path)
+	if p != "/api" && !strings.HasPrefix(p, "/api/") {
+		return false
+	}
+
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return false
+	}
+
+	originURL, err := url.Parse(origin)
+	if err != nil || originURL.Scheme == "" || originURL.Host == "" {
+		return true
+	}
+
+	scheme := "http"
+	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		scheme = "https"
+	}
+
+	requestHost := strings.TrimSpace(r.Host)
+	if requestHost == "" {
+		requestHost = r.URL.Host
+	}
+
+	return !strings.EqualFold(originURL.Scheme, scheme) || !strings.EqualFold(originURL.Host, requestHost)
 }
 
 func rejectLauncherDashboardAuth(w http.ResponseWriter, r *http.Request, canonicalPath string) {

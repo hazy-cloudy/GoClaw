@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { getWebSocketInstance, type ChatMessage, type WSEvent } from '@/lib/api'
+import { ensureBackendReadyForChat } from '@/lib/api/bootstrap'
 
 export interface UseChatOptions {
   onMessage?: (message: ChatMessage) => void
@@ -16,6 +17,30 @@ export function useChat(options: UseChatOptions = {}) {
   const [error, setError] = useState<string | null>(null)
   const wsRef = useRef(getWebSocketInstance())
   const optionsRef = useRef(options)
+
+  const connectWithBootstrap = useCallback(async () => {
+    setError(null)
+    setIsTyping(false)
+
+    const bootstrap = await ensureBackendReadyForChat()
+    if (!bootstrap.ok) {
+      const reason = bootstrap.reason || 'Backend not ready for chat'
+      setIsConnected(false)
+      setError(reason)
+      optionsRef.current.onConnectionChange?.(false)
+      optionsRef.current.onError?.(reason)
+      return
+    }
+
+    wsRef.current.resetReconnectAttempts()
+
+    try {
+      await wsRef.current.connect()
+    } catch (err) {
+      setError('连接失败')
+      console.error('WebSocket connection failed:', err)
+    }
+  }, [])
 
   useEffect(() => {
     optionsRef.current = options
@@ -51,8 +76,6 @@ export function useChat(options: UseChatOptions = {}) {
               return [...prev, message]
             })
             setIsTyping(message.streaming ?? false)
-            if (!message.streaming) {
-            }
             optionsRef.current.onMessage?.(message)
           }
           break
@@ -83,17 +106,17 @@ export function useChat(options: UseChatOptions = {}) {
     }
 
     const unsubscribe = ws.subscribe(handleEvent)
-    ws.resetReconnectAttempts()
 
-    ws.connect().catch((err) => {
-      setError('连接失败')
-      console.error('WebSocket connection failed:', err)
+    connectWithBootstrap().catch((err) => {
+      const message = err instanceof Error ? err.message : 'Backend bootstrap failed'
+      setError(message)
+      console.error('Chat bootstrap failed:', err)
     })
 
     return () => {
       unsubscribe()
     }
-  }, [])
+  }, [connectWithBootstrap])
 
   const sendMessage = useCallback((content: string) => {
     if (!content.trim()) return
@@ -125,13 +148,12 @@ export function useChat(options: UseChatOptions = {}) {
     setError(null)
     setIsTyping(false)
     wsRef.current.disconnect()
-    wsRef.current.resetReconnectAttempts()
 
-    wsRef.current.connect().catch((err) => {
+    connectWithBootstrap().catch((err) => {
       setError('重新连接失败')
       console.error('Reconnection failed:', err)
     })
-  }, [])
+  }, [connectWithBootstrap])
 
   const clearError = useCallback(() => {
     setError(null)

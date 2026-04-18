@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 
+import { getAuthRequestCredentials, withLauncherAuthHeader } from './lib/api'
+
 interface PicoTokenInfo {
   token?: string
   ws_url: string
@@ -188,7 +190,11 @@ export function usePicoClaw(apiBaseUrl: string, callbacks?: PicoCallbacks) {
     ): Promise<{ ok: boolean; status?: number; data?: PicoTokenInfo }> => {
       tried.push(endpoint)
       try {
-        const res = await fetch(endpoint, init)
+        const res = await fetch(endpoint, {
+          ...init,
+          headers: withLauncherAuthHeader(init?.headers),
+          credentials: getAuthRequestCredentials(endpoint),
+        })
         if (!res.ok) {
           return { ok: false, status: res.status }
         }

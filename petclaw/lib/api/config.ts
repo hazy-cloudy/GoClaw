@@ -84,6 +84,37 @@ export function withLauncherAuthHeader(headers: HeadersInit = {}): HeadersInit {
   }
 }
 
+function isCrossOriginRequest(input: string): boolean {
+  if (typeof window === 'undefined') {
+    return false
+  }
+
+  try {
+    const target = new URL(input, window.location.href)
+    return target.origin !== window.location.origin
+  } catch {
+    return false
+  }
+}
+
+export function getAuthRequestCredentials(input: string): RequestCredentials {
+  if (!USE_CREDENTIALS) {
+    return 'omit'
+  }
+  if (resolveLauncherToken() && isCrossOriginRequest(input)) {
+    return 'omit'
+  }
+  return 'include'
+}
+
+export function withLauncherAuthRequest(input: string, init: RequestInit = {}): RequestInit {
+  return {
+    ...init,
+    headers: withLauncherAuthHeader(init.headers),
+    credentials: init.credentials === 'omit' ? 'omit' : getAuthRequestCredentials(input),
+  }
+}
+
 export const API_ENDPOINTS = {
   AUTH: {
     LOGIN: '/api/auth/login',

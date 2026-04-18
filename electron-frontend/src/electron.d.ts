@@ -21,6 +21,7 @@ declare global {
         (text: string | null, emotion: string, audio?: string): void
       }
       getBackendBaseUrl: () => string
+      getLauncherToken: () => string
       setOnboardingMode: (enabled: boolean) => void
       minimizeWindow: () => void
       toggleMaximizeWindow: () => void

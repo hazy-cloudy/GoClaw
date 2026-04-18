@@ -1,7 +1,7 @@
 import {
   API_ENDPOINTS,
-  USE_CREDENTIALS,
   getApiBaseUrl,
+  getAuthRequestCredentials,
   withLauncherAuthHeader,
 } from './config'
 import { fetchWithAuthRetry } from './auth-bootstrap'
@@ -35,7 +35,7 @@ async function request<T>(
       ...defaultHeaders,
       ...options.headers,
     }),
-    credentials: USE_CREDENTIALS ? 'include' : 'omit',
+    credentials: getAuthRequestCredentials(url),
   }
 
   const shouldRetryAuth = !endpoint.startsWith('/api/auth/')

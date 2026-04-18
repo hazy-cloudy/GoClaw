@@ -7,11 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httputil"
-	"os"
-	"path/filepath"
 	"time"
-
-	"gopkg.in/yaml.v3"
 
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/logger"
@@ -64,11 +60,7 @@ func (h *Handler) createWsProxy(origProtocol string, token string) *httputil.Rev
 // It validates the client token before forwarding; rejects immediately on failure.
 func (h *Handler) handleWebSocketProxy() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		logger.Warnf("DEBUG WS: request received, h.configPath=%s", h.configPath)
-
 		gateway.mu.Lock()
-		logger.Warnf("DEBUG WS: current picoToken=%q", gateway.picoToken)
-
 		if gateway.pidData == nil {
 			if pd := readGatewayPidData(h.configPath); pd != nil {
 				logger.Infof("handleWebSocketProxy: found pidData, port=%d, pid=%d", pd.Port, pd.PID)
@@ -76,7 +68,6 @@ func (h *Handler) handleWebSocketProxy() http.HandlerFunc {
 			}
 		}
 		ensurePicoTokenCachedLocked(h.configPath)
-		logger.Warnf("DEBUG WS: after ensurePicoTokenCachedLocked, picoToken=%q", gateway.picoToken)
 		gatewayAvailable := gateway.picoToken != ""
 		gateway.mu.Unlock()
 
@@ -86,20 +77,16 @@ func (h *Handler) handleWebSocketProxy() http.HandlerFunc {
 			return
 		}
 		prot := r.Header.Values(protocolKey)
-		logger.Warnf("DEBUG WS: Sec-Websocket-Protocol header: %v (len=%d)", prot, len(prot))
-
 		if len(prot) > 0 {
 			origProtocol := prot[0]
-			logger.Warnf("DEBUG WS: origProtocol=%q", origProtocol)
 			newToken := picoComposedToken(prot[0])
-			logger.Warnf("DEBUG WS: newToken=%q", newToken)
 			if newToken != "" {
 				h.createWsProxy(origProtocol, newToken).ServeHTTP(w, r)
 				return
 			}
 		}
 
-		logger.Warnf("Invalid Pico token: %v", prot)
+		logger.Warnf("Rejected WebSocket proxy request with invalid Pico token")
 		http.Error(w, "Invalid Pico token", http.StatusForbidden)
 	}
 }
@@ -114,19 +101,8 @@ func (h *Handler) handleGetPicoToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Load security config to get the Pico channel token (stored in .security.yml)
-	secPath := filepath.Join(filepath.Dir(h.configPath), ".security.yml")
-	if data, err := os.ReadFile(secPath); err == nil {
-		var sec struct {
-			Channels struct {
-				Pico struct {
-					Token string `yaml:"token"`
-				} `yaml:"pico"`
-			} `yaml:"channels"`
-		}
-		if yaml.Unmarshal(data, &sec) == nil && sec.Channels.Pico.Token != "" {
-			cfg.Channels.Pico.Token = *config.NewSecureString(sec.Channels.Pico.Token)
-		}
+	if token := loadPicoTokenFromSecurityConfig(h.configPath); token != "" {
+		cfg.Channels.Pico.SetToken(token)
 	}
 
 	wsURL := h.buildWsURL(r)

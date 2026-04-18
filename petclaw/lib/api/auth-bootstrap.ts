@@ -1,4 +1,9 @@
-import { API_ENDPOINTS, getApiBaseUrl, resolveLauncherToken } from './config'
+import {
+  API_ENDPOINTS,
+  getApiBaseUrl,
+  resolveLauncherToken,
+  withLauncherAuthRequest,
+} from './config'
 
 let inflightBootstrap: Promise<boolean> | null = null
 
@@ -7,9 +12,8 @@ interface AuthStatusResponse {
 }
 
 async function fetchAuthStatus(): Promise<boolean> {
-  const res = await fetch(`${getApiBaseUrl()}${API_ENDPOINTS.AUTH.STATUS}`, {
-    credentials: 'include',
-  })
+  const input = `${getApiBaseUrl()}${API_ENDPOINTS.AUTH.STATUS}`
+  const res = await fetch(input, withLauncherAuthRequest(input, { credentials: 'include' }))
 
   if (!res.ok) {
     return false
@@ -20,14 +24,14 @@ async function fetchAuthStatus(): Promise<boolean> {
 }
 
 async function loginWithLauncherToken(token: string): Promise<boolean> {
-  const res = await fetch(`${getApiBaseUrl()}${API_ENDPOINTS.AUTH.LOGIN}`, {
+  const input = `${getApiBaseUrl()}${API_ENDPOINTS.AUTH.LOGIN}`
+  const res = await fetch(input, withLauncherAuthRequest(input, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    credentials: 'include',
     body: JSON.stringify({ token }),
-  })
+  }))
   return res.ok
 }
 
@@ -65,7 +69,8 @@ export async function ensureLauncherAuthSession(): Promise<boolean> {
 }
 
 export async function fetchWithAuthRetry(input: string, init: RequestInit = {}, allowRetry = true): Promise<Response> {
-  const res = await fetch(input, init)
+  const requestInit = withLauncherAuthRequest(input, init)
+  const res = await fetch(input, requestInit)
   if (!allowRetry || res.status !== 401) {
     return res
   }
@@ -75,5 +80,5 @@ export async function fetchWithAuthRetry(input: string, init: RequestInit = {}, 
     return res
   }
 
-  return fetch(input, init)
+  return fetch(input, withLauncherAuthRequest(input, init))
 }

@@ -230,6 +230,14 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
   }
 
   const complete = async () => {
+    const trimmedApiKey = apiKey.trim()
+    if (trimmedApiKey) {
+      try {
+        window.localStorage.setItem('petclaw.apiKeyDraft', trimmedApiKey)
+      } catch {
+      }
+    }
+
     setSummonInProgress(true)
     setDisplayProgress(4)
 
@@ -261,13 +269,6 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
 
     const finalNickname = customNickname.trim() || nickname
     const voiceStyle = activityLevel >= 65 ? '活泼碎碎念' : '温和陪伴型'
-
-    if (apiKey.trim()) {
-      try {
-        window.localStorage.setItem('petclaw.apiKeyDraft', apiKey.trim())
-      } catch {
-      }
-    }
 
     try {
       window.localStorage.setItem('petclaw.userIdentity', 'student')

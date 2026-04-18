@@ -1,7 +1,7 @@
 import {
   API_ENDPOINTS,
-  USE_CREDENTIALS,
   getApiBaseUrl,
+  getAuthRequestCredentials,
   getWsBaseUrl,
   withLauncherAuthHeader,
 } from './config'
@@ -136,7 +136,7 @@ export class PicoClawWebSocket {
     const res = await fetch(`${getApiBaseUrl()}${endpoint.tokenPath}`, {
       method: 'GET',
       headers: withLauncherAuthHeader(),
-      credentials: USE_CREDENTIALS ? 'include' : 'omit',
+      credentials: getAuthRequestCredentials(`${getApiBaseUrl()}${endpoint.tokenPath}`),
     })
 
     if (res.status === 404) {

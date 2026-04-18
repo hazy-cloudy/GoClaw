@@ -52,53 +52,49 @@ func refreshPicoToken(cfg *config.Config) {
 	gateway.picoToken = cfg.Channels.Pico.Token.String()
 }
 
+func loadPicoTokenFromSecurityConfig(configPath string) string {
+	secPath := filepath.Join(filepath.Dir(configPath), config.SecurityConfigFile)
+	data, err := os.ReadFile(secPath)
+	if err != nil {
+		return ""
+	}
+
+	var sec struct {
+		Channels struct {
+			Pico struct {
+				Token string `yaml:"token"`
+			} `yaml:"pico"`
+		} `yaml:"channels"`
+	}
+	if err := yaml.Unmarshal(data, &sec); err != nil {
+		return ""
+	}
+
+	return strings.TrimSpace(sec.Channels.Pico.Token)
+}
+
 // refreshPicoTokensLocked reads the pico token from config and caches it.
 // Caller must hold gateway.mu (or be sole writer).
 func refreshPicoTokensLocked(configPath string) {
-	logger.Warnf("DEBUG: refreshPicoTokensLocked called with configPath=%s", configPath)
-
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
-		logger.Warnf("DEBUG: refreshPicoTokensLocked: LoadConfig failed: %v", err)
 		return
 	}
-	logger.Warnf("DEBUG: refreshPicoTokensLocked: after LoadConfig, Pico.Token=%q", cfg.Channels.Pico.Token.String())
 
-	// Load security config to get the Pico channel token (stored in .security.yml)
-	secPath := filepath.Join(filepath.Dir(configPath), ".security.yml")
-	logger.Warnf("DEBUG: refreshPicoTokensLocked: reading .security.yml from: %s", secPath)
-
-	if data, err := os.ReadFile(secPath); err == nil {
-		var sec struct {
-			Channels struct {
-				Pico struct {
-					Token string `yaml:"token"`
-				} `yaml:"pico"`
-			} `yaml:"channels"`
-		}
-		if yaml.Unmarshal(data, &sec) == nil && sec.Channels.Pico.Token != "" {
-			cfg.Channels.Pico.Token = *config.NewSecureString(sec.Channels.Pico.Token)
-			logger.Warnf("DEBUG: refreshPicoTokensLocked: loaded from .security.yml, token=%q", sec.Channels.Pico.Token)
-		} else {
-			logger.Warnf("DEBUG: refreshPicoTokensLocked: failed to parse .security.yml or token empty, data=%s", string(data))
-		}
-	} else {
-		logger.Warnf("DEBUG: refreshPicoTokensLocked: failed to read .security.yml: %v", err)
+	if token := loadPicoTokenFromSecurityConfig(configPath); token != "" {
+		cfg.Channels.Pico.SetToken(token)
 	}
+
 	gateway.picoToken = cfg.Channels.Pico.Token.String()
-	logger.Warnf("DEBUG: refreshPicoTokensLocked: final picoToken=%q", gateway.picoToken)
 }
 
 // ensurePicoTokenCachedLocked lazily fills the in-memory pico token cache when
 // the launcher has already discovered a running gateway via pidData, but has
 // not yet refreshed the token into memory.
 func ensurePicoTokenCachedLocked(configPath string) {
-	logger.Warnf("DEBUG: ensurePicoTokenCachedLocked: current picoToken=%q", gateway.picoToken)
 	if gateway.picoToken != "" {
-		logger.Warnf("DEBUG: ensurePicoTokenCachedLocked: token already set, returning early")
 		return
 	}
-	logger.Warnf("DEBUG: ensurePicoTokenCachedLocked: calling refreshPicoTokensLocked")
 	refreshPicoTokensLocked(configPath)
 }
 
