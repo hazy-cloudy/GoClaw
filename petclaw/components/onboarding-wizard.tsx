@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
 import {
@@ -11,12 +11,9 @@ import {
   Gauge,
   Heart,
   Loader2,
-  Minus,
   MoonStar,
   PawPrint,
   Sparkles,
-  Square,
-  X,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -24,7 +21,11 @@ import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
 import { API_ENDPOINTS, getApiBaseUrl } from "@/lib/api"
 import { fetchWithAuthRetry } from "@/lib/api/auth-bootstrap"
-import { saveOnboardingState, SCHEDULE_ICS_NAME_STORAGE_KEY } from "@/lib/onboarding"
+import {
+  saveOnboardingState,
+  SCHEDULE_ICS_NAME_STORAGE_KEY,
+  type OnboardingState,
+} from "@/lib/onboarding"
 import { buildLearningRhythm, buildPressurePlan } from "@/lib/student-insights"
 
 type SetupStatus = "pending" | "running" | "done" | "failed"
@@ -145,18 +146,20 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
   const [customNickname, setCustomNickname] = useState("")
   const [showCompletionCard, setShowCompletionCard] = useState(false)
   const [previewReminderText, setPreviewReminderText] = useState("")
-  const [showcaseIndex, setShowcaseIndex] = useState(() => pickRandomIndex(showcaseGifs.length))
+  const [showcaseIndex, setShowcaseIndex] = useState(0)
   const [isMajorMenuOpen, setIsMajorMenuOpen] = useState(false)
   const [displayProgress, setDisplayProgress] = useState(0)
   const [isFinishing, setIsFinishing] = useState(false)
   const displayProgressRef = useRef(0)
   const majorMenuRef = useRef<HTMLDivElement | null>(null)
 
-  const hasElectronApi = typeof window !== "undefined" && Boolean(window.electronAPI)
-
   useEffect(() => {
     displayProgressRef.current = displayProgress
   }, [displayProgress])
+
+  useEffect(() => {
+    setShowcaseIndex(pickRandomIndex(showcaseGifs.length))
+  }, [])
 
   const learningRhythmInsight = useMemo(() => {
     return buildLearningRhythm({
@@ -409,6 +412,77 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
     }
   }
 
+  const buildOnboardingSnapshot = (): OnboardingState => {
+    const finalNickname = customNickname.trim() || nickname
+    const voiceStyle = activityLevel >= 65 ? "活泼碎碎念" : "温和陪伴型"
+
+    return {
+      version: 1,
+      completed: true,
+      completedAt: new Date().toISOString(),
+      profile: {
+        displayName: finalNickname,
+        role: profile.role,
+        language: profile.language,
+      },
+      pet: {
+        personalityTone,
+        activityLevel,
+        nickname,
+        customNickname: customNickname.trim(),
+        finalNickname,
+        voiceStyle,
+      },
+      appPreferences: {
+        ...app,
+        enableDesktopBubble: app.enableDesktopBubble && permissions.popupReminder,
+      },
+      permissions: {
+        ...permissions,
+      },
+      studyPreferences: {
+        sleepHour,
+        anxietyLevel,
+        selectedBreakers,
+        icsFileName,
+      },
+      studentInsights: {
+        learningRhythm: learningRhythmInsight,
+        pressurePlan: pressurePlanInsight,
+      },
+    }
+  }
+
+  const submitOnboardingSnapshot = async (snapshot: OnboardingState): Promise<void> => {
+    const baseUrl = getApiBaseUrl()
+    const payload = JSON.stringify(snapshot)
+
+    let response = await fetchWithAuthRetry(`${baseUrl}${API_ENDPOINTS.PET.ONBOARDING}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      credentials: "include",
+      body: payload,
+    })
+
+    if (response.status === 404) {
+      response = await fetchWithAuthRetry(`${baseUrl}${API_ENDPOINTS.PICO.ONBOARDING}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: payload,
+      })
+    }
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => "")
+      throw new Error(text || `onboarding submit failed: ${response.status}`)
+    }
+  }
+
   const complete = async () => {
     const trimmedApiKey = apiKey.trim()
     if (trimmedApiKey) {
@@ -446,8 +520,18 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
       setSetupError("自动配置未完全成功，已先进入控制台；你可以稍后在配置页重试。")
     }
 
-    const finalNickname = customNickname.trim() || nickname
-    const voiceStyle = activityLevel >= 65 ? "活泼碎碎念" : "温和陪伴型"
+    const snapshot = buildOnboardingSnapshot()
+
+    try {
+      await submitOnboardingSnapshot(snapshot)
+    } catch (error) {
+      setSummonInProgress(false)
+      setDisplayProgress(0)
+      setSetupError(
+        error instanceof Error ? error.message : "onboarding submit failed",
+      )
+      return
+    }
 
     try {
       window.localStorage.setItem("petclaw.userIdentity", "student")
@@ -466,29 +550,7 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
     } catch {
     }
 
-    saveOnboardingState({
-      version: 1,
-      completed: true,
-      completedAt: new Date().toISOString(),
-      profile: {
-        displayName: finalNickname,
-        role: profile.role,
-        language: profile.language,
-      },
-      pet: {
-        petName: finalNickname,
-        personality: personalityTone,
-        voiceStyle,
-      },
-      app: {
-        ...app,
-        enableDesktopBubble: permissions.popupReminder,
-      },
-      studentInsights: {
-        learningRhythm: learningRhythmInsight,
-        pressurePlan: pressurePlanInsight,
-      },
-    })
+    saveOnboardingState(snapshot)
     setIsFinishing(true)
     window.setTimeout(() => {
       onFinish()
@@ -509,40 +571,6 @@ export function OnboardingWizard({ onFinish }: OnboardingWizardProps) {
                 {steps.map((_, index) => (
                   <span key={index} className={`h-1.5 rounded-full transition-all ${index <= step ? "w-11 bg-[#9c5f22]" : "w-9 bg-[#e2d6c6]"}`} />
                 ))}
-              </div>
-              <div className="flex items-center gap-1 rounded-xl border border-[#e4d4c0] bg-white/80 p-1 shadow-sm">
-                <button
-                  type="button"
-                  className="rounded-md p-1.5 text-gradient-milestone hover:bg-[#f6ebdd] disabled:cursor-not-allowed disabled:opacity-40"
-                  onClick={() => window.electronAPI?.minimizeWindow?.()}
-                  disabled={!hasElectronApi}
-                  title="最小化"
-                >
-                  <Minus className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  type="button"
-                  className="rounded-md p-1.5 text-gradient-milestone hover:bg-[#f6ebdd] disabled:cursor-not-allowed disabled:opacity-40"
-                  onClick={() => window.electronAPI?.toggleMaximizeWindow?.()}
-                  disabled={!hasElectronApi}
-                  title="最大化 / 还原"
-                >
-                  <Square className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  type="button"
-                  className="rounded-md p-1.5 text-gradient-milestone hover:bg-[#f8d9d6] hover:text-[#b42318]"
-                  onClick={() => {
-                    if (hasElectronApi) {
-                      window.electronAPI?.closeWindow?.()
-                    } else {
-                      window.close()
-                    }
-                  }}
-                  title="关闭"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
               </div>
             </div>
             <h1 className="text-2xl font-semibold text-gradient-warm text-shadow-warm md:text-3xl animate-float">{steps[step]}</h1>

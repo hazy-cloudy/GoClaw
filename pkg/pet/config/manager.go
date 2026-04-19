@@ -233,3 +233,15 @@ func (m *Manager) SetAppConfig(config *AppConfig) {
 	defer m.mu.Unlock()
 	m.appConfig = config
 }
+
+func (m *Manager) SaveOnboardingSnapshot(snapshot *OnboardingSnapshot) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.configLoader.SaveOnboardingSnapshot(snapshot)
+}
+
+func (m *Manager) LoadOnboardingSnapshot() (*OnboardingSnapshot, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.configLoader.LoadOnboardingSnapshot()
+}

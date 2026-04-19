@@ -8,15 +8,32 @@ export interface OnboardingProfile {
 }
 
 export interface OnboardingPet {
-  petName: string
-  personality: string
+  personalityTone: string
+  activityLevel: number
+  nickname: string
+  customNickname: string
+  finalNickname: string
   voiceStyle: string
 }
 
-export interface OnboardingAppSettings {
+export interface OnboardingAppPreferences {
   autoConnectOnLaunch: boolean
   enableDesktopBubble: boolean
   openConsoleOnPetClick: boolean
+}
+
+export interface OnboardingPermissions {
+  screenView: boolean
+  appCheck: boolean
+  localDocRead: boolean
+  popupReminder: boolean
+}
+
+export interface OnboardingStudyPreferences {
+  sleepHour: number
+  anxietyLevel: number
+  selectedBreakers: string[]
+  icsFileName: string
 }
 
 export interface OnboardingState {
@@ -25,7 +42,9 @@ export interface OnboardingState {
   completedAt: string
   profile: OnboardingProfile
   pet: OnboardingPet
-  app: OnboardingAppSettings
+  appPreferences: OnboardingAppPreferences
+  permissions: OnboardingPermissions
+  studyPreferences: OnboardingStudyPreferences
   studentInsights?: {
     learningRhythm: {
       chronotype: 'morning' | 'balanced' | 'night'

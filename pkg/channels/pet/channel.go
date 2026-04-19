@@ -17,6 +17,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/pet"
+	petconfig "github.com/sipeed/picoclaw/pkg/pet/config"
 	"github.com/sipeed/picoclaw/pkg/pet/voice"
 )
 
@@ -331,6 +332,12 @@ func (c *PetChannel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		c.handleGetInitStatus(w, r)
+	case "/onboarding", "/onboarding/":
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		c.handlePostOnboarding(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -379,6 +386,31 @@ func (c *PetChannel) handleGetInitStatus(w http.ResponseWriter, _ *http.Request)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"initialized": true,
 		"service":     "pet",
+	})
+}
+
+func (c *PetChannel) handlePostOnboarding(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if c.service == nil {
+		http.Error(w, "pet service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	var snapshot petconfig.OnboardingSnapshot
+	if err := json.NewDecoder(r.Body).Decode(&snapshot); err != nil {
+		http.Error(w, "invalid onboarding payload", http.StatusBadRequest)
+		return
+	}
+
+	result, err := c.service.ApplyOnboardingSnapshot(&snapshot)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status": "ok",
+		"data":   result,
 	})
 }
 

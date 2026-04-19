@@ -191,9 +191,11 @@ export const API_ENDPOINTS = {
   PET: {
     TOKEN: '/api/pet/token',
     SETUP: '/api/pet/setup',
+    ONBOARDING: '/api/pet/onboarding',
   },
   PICO: {
     TOKEN: '/api/pico/token',
     SETUP: '/api/pico/setup',
+    ONBOARDING: '/api/pico/onboarding',
   },
 } as const

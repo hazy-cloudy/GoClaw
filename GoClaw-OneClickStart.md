@@ -6,16 +6,21 @@ Current default one-click mode is `petclaw`.
 
 ## Quick start (recommended)
 
-Double-click:
+Run from `cmd.exe` in the repo root:
 
-- `GoClaw-OneClickStart.bat`
-
-or run from terminal:
-
-From `D:\opencode\GoClaw` run:
-
-```powershell
+```cmd
 powershell -ExecutionPolicy Bypass -File .\GoClaw-OneClickStart.ps1
+```
+
+If you are not already in PowerShell:
+
+- `cmd.exe`: run the same command directly
+- `Git Bash` / `MSYS2` / `Nushell`: use `powershell.exe` instead of `powershell`
+
+Example for Git Bash:
+
+```bash
+powershell.exe -ExecutionPolicy Bypass -File ./GoClaw-OneClickStart.ps1
 ```
 
 This delegates to `scripts/run-goclaw-dev.ps1` and starts the full local stack:
@@ -26,7 +31,7 @@ This delegates to `scripts/run-goclaw-dev.ps1` and starts the full local stack:
 
 ## Launcher mode
 
-```powershell
+```cmd
 powershell -ExecutionPolicy Bypass -File .\GoClaw-OneClickStart.ps1 -Mode launcher
 ```
 
@@ -34,7 +39,7 @@ This starts the Web UI launcher (`picoclaw-web.exe`).
 
 ## Alternative: dev mode
 
-```powershell
+```cmd
 powershell -ExecutionPolicy Bypass -File .\GoClaw-OneClickStart.ps1 -Mode dev
 ```
 
@@ -52,7 +57,7 @@ What it does:
 
 Examples:
 
-```powershell
+```cmd
 powershell -ExecutionPolicy Bypass -File .\GoClaw-OneClickStart.ps1 -NoBrowser
 powershell -ExecutionPolicy Bypass -File .\GoClaw-OneClickStart.ps1 -Mode dev -SkipNpmInstall
 powershell -ExecutionPolicy Bypass -File .\GoClaw-OneClickStart.ps1 -Mode petclaw
