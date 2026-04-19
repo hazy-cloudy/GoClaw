@@ -9,6 +9,23 @@ interface PicoTokenInfo {
   protocol?: string
 }
 
+interface PicoTokenResponse {
+  token?: string
+  ws_url?: string
+  enabled?: boolean
+  protocol?: string
+}
+
+interface HealthStatusResponse {
+  status?: string
+}
+
+interface FetchJsonResult<T> {
+  ok: boolean
+  status?: number
+  data?: T
+}
+
 type MessageHandler = (data: any) => void
 type TransportMode = 'pico' | 'legacy'
 
@@ -78,6 +95,17 @@ function joinUrl(base: string, path: string): string {
   return `${trimTrailingSlash(base)}${path}`
 }
 
+function resolveHttpBase(base: string): string {
+  const trimmed = trimTrailingSlash(base || '')
+  if (trimmed) {
+    return trimmed
+  }
+  if (typeof window !== 'undefined') {
+    return trimTrailingSlash(window.location.origin)
+  }
+  return ''
+}
+
 function unique(values: string[]): string[] {
   return Array.from(new Set(values))
 }
@@ -101,21 +129,14 @@ function buildBaseCandidates(configuredBase: string): string[] {
   return unique(candidates)
 }
 
-function isPetTokenInfo(info: PicoTokenInfo): boolean {
+function isPetTokenInfo(info: { protocol?: string; ws_url?: string }): boolean {
   if (info.protocol === 'pet') {
     return true
   }
-  return info.ws_url.includes('/pet/ws') || /:8080\/ws(\?|$)/.test(info.ws_url)
-}
-
-function hasUsableTokenInfo(info: PicoTokenInfo): boolean {
   if (!info.ws_url) {
     return false
   }
-  if (isPetTokenInfo(info)) {
-    return true
-  }
-  return Boolean(info.token)
+  return info.ws_url.includes('/pet/ws') || /:8080\/ws(\?|$)/.test(info.ws_url)
 }
 
 function isPetWsUrl(wsUrl: string): boolean {
@@ -123,6 +144,35 @@ function isPetWsUrl(wsUrl: string): boolean {
     return false
   }
   return wsUrl.includes('/pet/ws') || /:8080\/ws(\?|$)/.test(wsUrl)
+}
+
+function buildDefaultPetWsUrl(base: string): string | null {
+  const httpBase = resolveHttpBase(base)
+  if (!httpBase) {
+    return null
+  }
+  return normalizeWsUrl(joinUrl(httpBase, '/pet/ws'))
+}
+
+function normalizePetTokenInfo(
+  info: PicoTokenResponse | undefined,
+  base: string,
+): PicoTokenInfo | null {
+  if (!info || info.enabled === false) {
+    return null
+  }
+
+  const ws_url = info.ws_url?.trim() || buildDefaultPetWsUrl(base)
+  if (!ws_url || !isPetWsUrl(ws_url)) {
+    return null
+  }
+
+  return {
+    token: info.token,
+    ws_url,
+    enabled: info.enabled ?? true,
+    protocol: info.protocol || 'pet',
+  }
 }
 
 function decodeEscapedUnicode(value: string): string {
@@ -184,10 +234,10 @@ export function usePicoClaw(apiBaseUrl: string, callbacks?: PicoCallbacks) {
     const bases = buildBaseCandidates(apiBaseRef.current)
     const tried: string[] = []
 
-    const tryFetchJSON = async (
+    const tryFetchJSON = async <T,>(
       endpoint: string,
       init?: RequestInit,
-    ): Promise<{ ok: boolean; status?: number; data?: PicoTokenInfo }> => {
+    ): Promise<FetchJsonResult<T>> => {
       tried.push(endpoint)
       try {
         const res = await fetch(endpoint, {
@@ -198,7 +248,7 @@ export function usePicoClaw(apiBaseUrl: string, callbacks?: PicoCallbacks) {
         if (!res.ok) {
           return { ok: false, status: res.status }
         }
-        const data = (await res.json()) as PicoTokenInfo
+        const data = (await res.json()) as T
         return { ok: true, status: res.status, data }
       } catch (error) {
         log('fetch failed', { endpoint, error: String(error) })
@@ -207,28 +257,41 @@ export function usePicoClaw(apiBaseUrl: string, callbacks?: PicoCallbacks) {
     }
 
     for (const base of bases) {
+      const healthEndpoint = joinUrl(base, '/health')
       const petTokenEndpoint = joinUrl(base, '/pet/token')
       log('fetchTokenInfo try base', {
         base,
+        healthEndpoint,
         petTokenEndpoint,
       })
 
-      const petToken = await tryFetchJSON(petTokenEndpoint)
-      if (petToken.ok && petToken.data && hasUsableTokenInfo(petToken.data)) {
-        if (!isPetWsUrl(petToken.data.ws_url)) {
-          log('fetchTokenInfo got non-pet ws_url, skip', {
-            endpoint: petTokenEndpoint,
-            ws_url: petToken.data.ws_url,
-          })
-          continue
-        }
+      const health = await tryFetchJSON<HealthStatusResponse>(healthEndpoint)
+      if (!health.ok) {
+        log('fetchTokenInfo health unavailable, skip', {
+          endpoint: healthEndpoint,
+          status: health.status,
+        })
+        continue
+      }
+
+      const petToken = await tryFetchJSON<PicoTokenResponse>(petTokenEndpoint)
+      const tokenInfo = normalizePetTokenInfo(petToken.data, base)
+      if (petToken.ok && tokenInfo) {
         log('fetchTokenInfo success (pet)', {
           base,
+          healthEndpoint,
           endpoint: petTokenEndpoint,
-          ws_url: petToken.data.ws_url,
+          ws_url: tokenInfo.ws_url,
         })
-        return petToken.data
+        return tokenInfo
       }
+
+      log('fetchTokenInfo pet channel unavailable, skip', {
+        endpoint: petTokenEndpoint,
+        status: petToken.status,
+        enabled: petToken.data?.enabled,
+        ws_url: petToken.data?.ws_url,
+      })
     }
 
     console.error('[PicoClaw] Failed to fetch pet token info from /pet/token', { tried })
