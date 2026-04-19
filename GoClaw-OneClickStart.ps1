@@ -61,6 +61,32 @@ $LauncherExe = Join-Path $Root "picoclaw-web.exe"
 Write-Host "Project root: $Root"
 Write-Host "Start mode:   $Mode"
 
+$runGoclawDev = Join-Path $Root "scripts\run-goclaw-dev.ps1"
+
+if ($Mode -ne "launcher") {
+    if (-not (Test-Path $runGoclawDev)) {
+        throw "Startup script not found: $runGoclawDev"
+    }
+
+    if ($SkipNpmInstall) {
+        Write-Warning "-SkipNpmInstall is ignored when delegating to scripts\\run-goclaw-dev.ps1"
+    }
+
+    $delegateArgs = @(
+        "-ExecutionPolicy", "Bypass",
+        "-File", $runGoclawDev,
+        "-Restart",
+        "-PetclawMode", "dev"
+    )
+
+    if ($NoBrowser) {
+        Write-Warning "-NoBrowser is not used by scripts\\run-goclaw-dev.ps1 and will be ignored"
+    }
+
+    & powershell @delegateArgs
+    exit (Get-ExitCodeOrDefault)
+}
+
 if ($Mode -eq "launcher") {
     if (-not (Test-Path $LauncherExe)) {
         throw "Launcher not found: $LauncherExe"

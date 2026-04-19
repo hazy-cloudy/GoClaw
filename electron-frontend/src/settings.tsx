@@ -759,7 +759,10 @@ export default function PetClawApp() {
         ...p,
       ].slice(0, 8))
     }
+    clearResponseTimeout()
+    resetAudioStream()
     setChatHistory([])
+    setInputText('')
     setStreamingText('')
     chatRef.current = ''
     setMenu('chat')
