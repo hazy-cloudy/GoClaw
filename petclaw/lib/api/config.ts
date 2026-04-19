@@ -1,4 +1,7 @@
 const LOCAL_DEFAULT_ORIGIN = 'http://127.0.0.1:18800'
+const LOCAL_DIRECT_GATEWAY_ORIGIN = process.env.NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL || 'http://127.0.0.1:18790'
+export const DIRECT_PET_TOKEN_PATH = '/pet/token'
+export const DIRECT_PET_WS_PATH = '/pet/ws'
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_PICOCLAW_API_URL || ''
 export const WS_BASE_URL = process.env.NEXT_PUBLIC_PICOCLAW_WS_URL || ''
@@ -27,6 +30,10 @@ export function getApiBaseUrl(): string {
   }
 
   return LOCAL_DEFAULT_ORIGIN
+}
+
+export function getDirectGatewayBaseUrl(): string {
+  return LOCAL_DIRECT_GATEWAY_ORIGIN
 }
 
 export function getWsBaseUrl(): string {

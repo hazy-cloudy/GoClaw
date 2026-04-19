@@ -1,8 +1,9 @@
-const { contextBridge, ipcRenderer } = require('electron');
+﻿const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
   getBackendBaseUrl: () => process.env.GOCLAW_BACKEND_URL || 'http://127.0.0.1:18800',
   getLauncherToken: () => process.env.GOCLAW_LAUNCHER_TOKEN || process.env.PICOCLAW_LAUNCHER_TOKEN || '',
+  openOnboarding: () => ipcRenderer.send('open-onboarding'),
   setOnboardingMode: (enabled) => ipcRenderer.send('set-onboarding-mode', Boolean(enabled)),
   minimizeWindow: () => ipcRenderer.send('window-minimize'),
   toggleMaximizeWindow: () => ipcRenderer.send('window-toggle-maximize'),
@@ -22,13 +23,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   sendConnectionAlive: () => ipcRenderer.send('connection-alive'),
   onSettingsUpdate: (callback) => {
-    ipcRenderer.on('settings-updated', (event, settings) => callback(settings));
+    ipcRenderer.on('settings-updated', (_event, settings) => callback(settings));
   },
   onChatHistoryUpdate: (callback) => {
-    ipcRenderer.on('chat-history-updated', (event, history) => callback(history));
+    ipcRenderer.on('chat-history-updated', (_event, history) => callback(history));
   },
   onBubbleShow: (callback) => {
-    ipcRenderer.on('bubble-show', (event, data) => callback(data));
+    ipcRenderer.on('bubble-show', (_event, data) => callback(data));
   },
   onConnectionAlive: (callback) => {
     ipcRenderer.on('connection-alive', () => callback());

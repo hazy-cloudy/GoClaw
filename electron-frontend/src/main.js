@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen } = require('electron');
+﻿const { app, BrowserWindow, ipcMain, screen } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -8,8 +8,6 @@ let settingsWindow = null;
 
 const PET_WIDTH = 280;
 const PET_HEIGHT = 380;
-const ONBOARDING_WIDTH = 1280;
-const ONBOARDING_HEIGHT = 860;
 
 const userDataPath = path.join(os.homedir(), '.goclaw');
 app.setPath('userData', userDataPath);
@@ -31,16 +29,26 @@ function logToFile(message) {
 logToFile('Electron application started');
 
 const rendererBaseUrl = (process.env.ELECTRON_RENDERER_URL || 'http://localhost:5173').trim().replace(/\/+$/, '');
+const dashboardBaseUrl = (process.env.GOCLAW_DASHBOARD_URL || 'http://127.0.0.1:3000').trim().replace(/\/+$/, '');
+const launcherToken = (process.env.GOCLAW_LAUNCHER_TOKEN || process.env.PICOCLAW_LAUNCHER_TOKEN || '').trim();
 const shouldOpenDevTools = process.env.ELECTRON_OPEN_DEVTOOLS === '1';
 
-function createPetWindow() {
-  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
-
-  petWindow = new BrowserWindow({
+function getPetBounds() {
+  const display = screen.getPrimaryDisplay();
+  const area = display.workArea;
+  return {
+    x: area.x + area.width - PET_WIDTH - 20,
+    y: area.y + area.height - PET_HEIGHT - 60,
     width: PET_WIDTH,
     height: PET_HEIGHT,
-    x: width - PET_WIDTH - 20,
-    y: height - PET_HEIGHT - 60,
+  };
+}
+
+function createPetWindow() {
+  const bounds = getPetBounds();
+
+  petWindow = new BrowserWindow({
+    ...bounds,
     frame: false,
     transparent: true,
     alwaysOnTop: true,
@@ -68,37 +76,54 @@ function createPetWindow() {
   });
 }
 
-function applyOnboardingMode(enabled) {
+function resetPetWindow() {
   if (!petWindow || petWindow.isDestroyed()) {
     return;
   }
 
-  const display = screen.getDisplayMatching(petWindow.getBounds());
-  const area = display.workArea;
-
-  if (enabled) {
-    const width = Math.min(ONBOARDING_WIDTH, area.width - 40);
-    const height = Math.min(ONBOARDING_HEIGHT, area.height - 40);
-    const x = area.x + Math.round((area.width - width) / 2);
-    const y = area.y + Math.round((area.height - height) / 2);
-
-    petWindow.setResizable(true);
-    petWindow.setAlwaysOnTop(false);
-    petWindow.setSkipTaskbar(false);
-    petWindow.setBounds({ x, y, width, height }, true);
-    return;
-  }
-
-  const x = area.x + area.width - PET_WIDTH - 20;
-  const y = area.y + area.height - PET_HEIGHT - 60;
   petWindow.setResizable(false);
   petWindow.setAlwaysOnTop(true);
   petWindow.setSkipTaskbar(true);
-  petWindow.setBounds({ x, y, width: PET_WIDTH, height: PET_HEIGHT }, true);
+  petWindow.setBounds(getPetBounds(), true);
 }
 
-function createSettingsWindow() {
+function withLauncherToken(rawUrl) {
+  if (!launcherToken) {
+    return rawUrl;
+  }
+
+  try {
+    const parsed = new URL(rawUrl);
+    if (!parsed.searchParams.has('token')) {
+      parsed.searchParams.set('token', launcherToken);
+    }
+    return parsed.toString();
+  } catch {
+    return rawUrl;
+  }
+}
+
+function buildDashboardUrl(pathname = '') {
+  let resolved = dashboardBaseUrl;
+
+  if (pathname) {
+    if (/^https?:\/\//i.test(pathname)) {
+      resolved = pathname;
+    } else {
+      resolved = `${dashboardBaseUrl}${pathname.startsWith('/') ? pathname : `/${pathname}`}`;
+    }
+  }
+
+  return withLauncherToken(resolved);
+}
+
+function createSettingsWindow(targetUrl = buildDashboardUrl()) {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
+    if (targetUrl && settingsWindow.webContents.getURL() !== targetUrl) {
+      settingsWindow.loadURL(targetUrl).catch((err) => {
+        logToFile(`[SETTINGS WINDOW] reload failed: ${String(err)}`);
+      });
+    }
     if (settingsWindow.isMinimized()) {
       settingsWindow.restore();
     }
@@ -119,7 +144,7 @@ function createSettingsWindow() {
     show: false,
     frame: false,
     transparent: false,
-    backgroundColor: '#111111',
+    backgroundColor: '#f7ecdf',
     alwaysOnTop: false,
     autoHideMenuBar: true,
     webPreferences: {
@@ -129,7 +154,7 @@ function createSettingsWindow() {
     }
   });
 
-  const settingsUrl = `${rendererBaseUrl}/settings.html`;
+  const settingsUrl = targetUrl || buildDashboardUrl();
   logToFile(`[SETTINGS WINDOW] opening ${settingsUrl}`);
 
   settingsWindow.webContents.on('did-fail-load', (_event, code, desc, url) => {
@@ -159,12 +184,22 @@ function createSettingsWindow() {
 
 ipcMain.on('open-settings', () => {
   logToFile('[IPC] open-settings');
-  createSettingsWindow();
+  createSettingsWindow(buildDashboardUrl());
 });
 
-ipcMain.on('set-onboarding-mode', (_event, enabled) => {
+ipcMain.on('open-onboarding', () => {
+  logToFile('[IPC] open-onboarding');
+  createSettingsWindow(buildDashboardUrl('/onboarding?mode=rerun'));
+});
+
+ipcMain.on('set-onboarding-mode', (event, enabled) => {
   logToFile(`[IPC] set-onboarding-mode ${Boolean(enabled)}`);
-  applyOnboardingMode(Boolean(enabled));
+  const target = BrowserWindow.fromWebContents(event.sender);
+  if (target === petWindow) {
+    resetPetWindow();
+    return;
+  }
+  logToFile('[IPC] set-onboarding-mode ignored for non-pet window');
 });
 
 ipcMain.on('window-minimize', (event) => {

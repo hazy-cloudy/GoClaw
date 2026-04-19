@@ -242,20 +242,18 @@ func (h *PetHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (*ag
 //  7. 检查情绪阈值，决定是否推送
 //  8. 从内容中移除所有标签
 func (h *PetHook) AfterLLM(ctx context.Context, resp *agent.LLMHookResponse) (*agent.LLMHookResponse, agent.HookDecision, error) {
-	// 防御性检查
 	if resp == nil || resp.Response == nil {
-		logger.InfoCF("pet", "PetHook.AfterLLM: 响应为空，跳过", nil)
+		logger.InfoCF("pet", "PetHook.AfterLLM: response is nil, skip", nil)
 		return resp, agent.HookDecision{Action: agent.HookActionContinue}, nil
 	}
 
 	content := resp.Response.Content
 	if content == "" {
-		logger.InfoCF("pet", "PetHook.AfterLLM: 内容为空，跳过", nil)
+		logger.InfoCF("pet", "PetHook.AfterLLM: content is empty, skip", nil)
 		return resp, agent.HookDecision{Action: agent.HookActionContinue}, nil
 	}
 
-	// 记录LLM原始响应
-	logger.DebugCF("pet", "PetHook.AfterLLM: 收到LLM响应", map[string]any{
+	logger.DebugCF("pet", "PetHook.AfterLLM: received LLM response", map[string]any{
 		"content_length": len(content),
 		"content_preview": func() string {
 			if len(content) > 200 {
@@ -265,30 +263,27 @@ func (h *PetHook) AfterLLM(ctx context.Context, resp *agent.LLMHookResponse) (*a
 		}(),
 	})
 
-	// 1. 解析情绪标签并更新（使用增量更新）
+	currentChar := h.charManager.GetCurrent()
+
 	emotionTags := parseEmotionTags(content)
-	if len(emotionTags) > 0 {
-		logger.InfoCF("pet", "PetHook: 解析到情绪标签", map[string]any{
+	if len(emotionTags) > 0 && currentChar != nil {
+		logger.InfoCF("pet", "PetHook: parsed emotion tags", map[string]any{
 			"emotion_tags": emotionTags,
 		})
-		h.charManager.GetCurrent().GetEmotionEngine().UpdateFromLLMTagsDelta(emotionTags)
-		// 情绪状态会在 Shutdown 时通过 configManager 统一保存
+		currentChar.GetEmotionEngine().UpdateFromLLMTagsDelta(emotionTags)
 	}
 
-	// 2. 解析MBTI标签并更新
 	mbtiTags := emotion.ParseMBTITags(content)
-	if len(mbtiTags) > 0 {
-		logger.InfoCF("pet", "PetHook: 解析到MBTI标签", map[string]any{
+	if len(mbtiTags) > 0 && currentChar != nil {
+		logger.InfoCF("pet", "PetHook: parsed MBTI tags", map[string]any{
 			"mbti_tags": mbtiTags,
 		})
-		h.charManager.GetCurrent().GetEmotionEngine().UpdateMBTIFromTags(mbtiTags)
-		// MBTI 会在 Shutdown 时通过 configManager 统一保存
+		currentChar.GetEmotionEngine().UpdateMBTIFromTags(mbtiTags)
 	}
 
-	// 3. 解析动作标签并触发推送
 	actionNames := h.actionManager.ParseActionTags(content)
 	if len(actionNames) > 0 {
-		logger.InfoCF("pet", "PetHook: 解析到动作标签", map[string]any{
+		logger.InfoCF("pet", "PetHook: parsed action tags", map[string]any{
 			"action_names": actionNames,
 		})
 		actions := h.actionManager.GetByNames(actionNames)
@@ -297,53 +292,42 @@ func (h *PetHook) AfterLLM(ctx context.Context, resp *agent.LLMHookResponse) (*a
 		}
 	}
 
-	// 4. 解析记忆标签并保存
 	memoryTags := parseMemoryTags(content)
-	if len(memoryTags) > 0 && h.memoryStore != nil {
-		char := h.charManager.GetCurrent()
-		if char != nil {
-			for _, tag := range memoryTags {
-				h.memoryStore.Add(char.ID, tag.Summary, tag.Type, tag.Weight)
-				logger.Infof("pet: saved memory type=%s, weight=%d, summary=%s", tag.Type, tag.Weight, tag.Summary)
-			}
+	if len(memoryTags) > 0 && h.memoryStore != nil && currentChar != nil {
+		for _, tag := range memoryTags {
+			h.memoryStore.Add(currentChar.ID, tag.Summary, tag.Type, tag.Weight)
+			logger.Infof("pet: saved memory type=%s, weight=%d, summary=%s", tag.Type, tag.Weight, tag.Summary)
 		}
 	}
 
-	// 5. 检查情绪阈值，决定是否推送
-	if shouldPush, push := h.charManager.GetCurrent().GetEmotionEngine().ShouldPush(); shouldPush {
-		logger.InfoCF("pet", "PetHook: 情绪阈值触发推送", map[string]any{
-			"emotion": push.Emotion,
-			"score":   push.Score,
-		})
-		h.pushEmotionChange(push)
+	if currentChar != nil {
+		if shouldPush, push := currentChar.GetEmotionEngine().ShouldPush(); shouldPush {
+			logger.InfoCF("pet", "PetHook: emotion threshold triggered push", map[string]any{
+				"emotion": push.Emotion,
+				"score":   push.Score,
+			})
+			h.pushEmotionChange(push)
+		}
 	}
 
-	// 5. 提取用户可见文本
-	// 首先从 [text:xxx] 标签提取纯文本
-	textTags := parseTextTags(content)
-	if len(textTags) == 0 {
-		logger.InfoCF("pet", "PetHook:LLM响应中未解析到文本标签", nil)
+	parseText := extractTextFromTags(content)
+	if parseText == "" {
+		logger.InfoCF("pet", "PetHook: no text tags found in LLM response", nil)
 		return resp, agent.HookDecision{Action: agent.HookActionContinue}, nil
 	}
-	parseText := textTags[0].Text
+
 	resp.Response.Content = content
 
-	// 6. 记录对话到会话存储（用于后续压缩）
-	if h.conversationStore != nil {
-		char := h.charManager.GetCurrent()
-		if char != nil {
-			if h.lastUserMessage != "" {
-				if err := h.conversationStore.Add(char.ID, "user", h.lastUserMessage); err != nil {
-					logger.Warnf("pet: failed to add user message to conversation store: %v", err)
-				}
+	if h.conversationStore != nil && currentChar != nil {
+		if h.lastUserMessage != "" {
+			if err := h.conversationStore.Add(currentChar.ID, "user", h.lastUserMessage); err != nil {
+				logger.Warnf("pet: failed to add user message to conversation store: %v", err)
 			}
-			if parseText != "" {
-				if err := h.conversationStore.Add(char.ID, "pet", parseText); err != nil {
-					logger.Warnf("pet: failed to add pet message to conversation store: %v", err)
-				}
-			}
-			h.lastUserMessage = ""
 		}
+		if err := h.conversationStore.Add(currentChar.ID, "pet", parseText); err != nil {
+			logger.Warnf("pet: failed to add pet message to conversation store: %v", err)
+		}
+		h.lastUserMessage = ""
 	}
 
 	return resp, agent.HookDecision{Action: agent.HookActionContinue}, nil

@@ -1,4 +1,10 @@
-import { API_ENDPOINTS, getApiBaseUrl, withLauncherAuthRequest } from './config'
+import {
+  API_ENDPOINTS,
+  DIRECT_PET_TOKEN_PATH,
+  getApiBaseUrl,
+  getDirectGatewayBaseUrl,
+  withLauncherAuthRequest,
+} from './config'
 import { ensureLauncherAuthSession, fetchWithAuthRetry } from './auth-bootstrap'
 
 interface GatewayStatusResponse {
@@ -53,6 +59,35 @@ async function getGatewayStatus(): Promise<GatewayStatusResponse> {
     throw new Error(`gateway status failed: ${res.status}`)
   }
   return (await res.json()) as GatewayStatusResponse
+}
+
+async function isDirectGatewayHealthy(): Promise<boolean> {
+  try {
+    const res = await fetch(`${getDirectGatewayBaseUrl()}/health`)
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
+async function isDirectPetChannelReady(): Promise<boolean> {
+  try {
+    const res = await fetch(`${getDirectGatewayBaseUrl()}${DIRECT_PET_TOKEN_PATH}`)
+    if (!res.ok) {
+      return false
+    }
+    const data = (await res.json()) as { enabled?: boolean; ws_url?: string }
+    return Boolean(data.enabled && data.ws_url)
+  } catch {
+    return false
+  }
+}
+
+async function isDirectGatewayReady(): Promise<boolean> {
+  if (!(await isDirectGatewayHealthy())) {
+    return false
+  }
+  return isDirectPetChannelReady()
 }
 
 async function startGateway(): Promise<void> {
@@ -232,6 +267,10 @@ async function ensureDefaultModelIfNeeded(startReason?: string): Promise<void> {
 }
 
 export async function ensureBackendReadyForChat(): Promise<BackendBootstrapResult> {
+  if (await isDirectGatewayReady()) {
+    return { ok: true }
+  }
+
   const authed = await ensureLauncherAuthSession()
   if (!authed) {
     return { ok: false, reason: 'dashboard auth missing' }
@@ -243,6 +282,10 @@ export async function ensureBackendReadyForChat(): Promise<BackendBootstrapResul
     return wsReady
       ? { ok: true }
       : { ok: false, reason: 'websocket proxy unavailable (gateway not ready)' }
+  }
+
+  if (await isDirectGatewayReady()) {
+    return { ok: true }
   }
 
   await ensureDefaultModelIfNeeded(status.gateway_start_reason)

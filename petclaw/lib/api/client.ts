@@ -1,6 +1,7 @@
 import {
   API_ENDPOINTS,
   getApiBaseUrl,
+  getDirectGatewayBaseUrl,
   getAuthRequestCredentials,
   withLauncherAuthHeader,
 } from './config'
@@ -57,6 +58,18 @@ async function request<T>(
   return JSON.parse(text)
 }
 
+async function fetchDirectGatewayHealth(): Promise<{ uptime?: string } | null> {
+  try {
+    const res = await fetch(`${getDirectGatewayBaseUrl()}/health`)
+    if (!res.ok) {
+      return null
+    }
+    return (await res.json()) as { uptime?: string }
+  } catch {
+    return null
+  }
+}
+
 // 认证 API
 export const authApi = {
   login: (token: string) =>
@@ -78,13 +91,52 @@ export const authApi = {
 // 网关 API
 export const gatewayApi = {
   status: async () => {
-    const raw = await request<{
-      gateway_status?: 'stopped' | 'starting' | 'running' | 'stopping' | 'restarting' | 'error'
-      pid?: number
-      gateway_restart_required?: boolean
-      gateway_start_allowed?: boolean
-      gateway_start_reason?: string
-    }>(API_ENDPOINTS.GATEWAY.STATUS)
+    let raw:
+      | {
+          gateway_status?: 'stopped' | 'starting' | 'running' | 'stopping' | 'restarting' | 'error'
+          pid?: number
+          gateway_restart_required?: boolean
+          gateway_start_allowed?: boolean
+          gateway_start_reason?: string
+        }
+      | null = null
+
+    try {
+      raw = await request<{
+        gateway_status?: 'stopped' | 'starting' | 'running' | 'stopping' | 'restarting' | 'error'
+        pid?: number
+        gateway_restart_required?: boolean
+        gateway_start_allowed?: boolean
+        gateway_start_reason?: string
+      }>(API_ENDPOINTS.GATEWAY.STATUS)
+    } catch (error) {
+      const direct = await fetchDirectGatewayHealth()
+      if (!direct) {
+        throw error
+      }
+      return {
+        running: true,
+        state: 'running' as const,
+        pid: undefined,
+        restartRequired: false,
+        startAllowed: false,
+        startReason: 'direct gateway fallback',
+        uptime: direct.uptime,
+      }
+    }
+
+    const direct = await fetchDirectGatewayHealth()
+    if (direct && raw.gateway_status !== 'running') {
+      return {
+        running: true,
+        state: 'running' as const,
+        pid: raw.pid,
+        restartRequired: Boolean(raw.gateway_restart_required),
+        startAllowed: raw.gateway_start_allowed,
+        startReason: raw.gateway_start_reason || 'direct gateway fallback',
+        uptime: direct.uptime,
+      }
+    }
 
     const state = raw.gateway_status === 'error' ? 'stopped' : (raw.gateway_status || 'stopped')
     return {
@@ -94,6 +146,7 @@ export const gatewayApi = {
       restartRequired: Boolean(raw.gateway_restart_required),
       startAllowed: raw.gateway_start_allowed,
       startReason: raw.gateway_start_reason,
+      uptime: direct?.uptime,
     }
   },
 

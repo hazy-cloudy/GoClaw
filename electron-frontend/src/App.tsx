@@ -1,7 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
-
-import { OnboardingWizard } from './components/OnboardingWizard'
-import { loadOnboardingState } from './lib/onboarding'
+﻿import { useState, useEffect, useCallback, useRef } from 'react'
 
 type PetState = 'idle' | 'sad' | 'happy' | 'listen' | 'standby' | 'celebrate' | 'shakeHead' | 'stayOut'
 
@@ -107,7 +104,7 @@ const resolvePetState = (data: BubbleData): PetState => {
   return 'idle'
 }
 
-function PetView() {
+function App() {
   const [petState, setPetState] = useState<PetState>('standby')
   const [currentImage, setCurrentImage] = useState('/standby1.gif')
   const currentImageRef = useRef(currentImage)
@@ -168,6 +165,7 @@ function PetView() {
 
     window.electronAPI?.onBubbleShow(handleBubbleShow)
     window.electronAPI?.onSettingsUpdate(() => {})
+    document.title = 'PetClaw'
   }, [transitionTo])
 
   const openSettings = () => {
@@ -191,35 +189,6 @@ function PetView() {
       </div>
     </div>
   )
-}
-
-function App() {
-  const [ready, setReady] = useState(false)
-  const [showOnboarding, setShowOnboarding] = useState(false)
-
-  useEffect(() => {
-    const onboardingState = loadOnboardingState()
-    setShowOnboarding(!onboardingState?.completed)
-    setReady(true)
-  }, [])
-
-  useEffect(() => {
-    if (!ready) {
-      return
-    }
-    window.electronAPI?.setOnboardingMode?.(showOnboarding)
-    document.title = showOnboarding ? '初始化向导 - PetClaw AI' : 'PetClaw'
-  }, [ready, showOnboarding])
-
-  if (!ready) {
-    return <div className="app" />
-  }
-
-  if (showOnboarding) {
-    return <OnboardingWizard onFinish={() => setShowOnboarding(false)} />
-  }
-
-  return <PetView />
 }
 
 export default App
