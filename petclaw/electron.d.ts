@@ -1,6 +1,12 @@
 export {}
 
 declare global {
+  interface BubblePayload {
+    text: string | null
+    emotion: string
+    audio?: string
+  }
+
   interface Window {
     electronAPI?: {
       openOnboarding?: () => void
@@ -9,7 +15,10 @@ declare global {
       minimizeWindow?: () => void
       toggleMaximizeWindow?: () => void
       closeWindow?: () => void
-      showBubble?: (text: string | null, emotion: string, audio?: string) => void
+      showBubble?: {
+        (payload: BubblePayload): void
+        (text: string | null, emotion: string, audio?: string): void
+      }
     }
   }
 }
