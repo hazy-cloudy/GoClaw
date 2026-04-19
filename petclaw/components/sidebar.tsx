@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import { useEffect, useRef, useState, type CSSProperties } from "react"
 import {
@@ -42,14 +42,6 @@ const navItems = [
   { icon: Clock, label: "定时任务" },
   { icon: Settings, label: "配置" },
 ]
-
-function formatRelativeTime(timestamp: number): string {
-  const diffMs = Date.now() - timestamp
-  if (diffMs < 60_000) return "刚刚"
-  if (diffMs < 3_600_000) return `${Math.max(1, Math.floor(diffMs / 60_000))}分钟前`
-  if (diffMs < 86_400_000) return `${Math.max(1, Math.floor(diffMs / 3_600_000))}小时前`
-  return `${Math.max(1, Math.floor(diffMs / 86_400_000))}天前`
-}
 
 export function Sidebar({ activeNav, setActiveNav, chat }: SidebarProps) {
   const [isDarkMode, setIsDarkMode] = useState(false)
@@ -267,12 +259,9 @@ export function Sidebar({ activeNav, setActiveNav, chat }: SidebarProps) {
                   )}
                 >
                   <Home className="w-4 h-4 shrink-0" />
-                  <div className="min-w-0 flex-1 flex flex-col items-start">
-                    <span className="w-full truncate text-foreground">
+                  <div className="min-w-0 flex-1">
+                    <span className="block w-full truncate text-foreground">
                       {session.title}
-                    </span>
-                    <span className="w-full truncate text-xs text-muted-foreground">
-                      {session.preview || formatRelativeTime(session.updatedAt)}
                     </span>
                   </div>
                 </button>

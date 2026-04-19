@@ -81,6 +81,10 @@ export interface WSEvent {
 
 type WSEventHandler = (event: WSEvent) => void
 
+function normalizeIncomingText(text: string): string {
+  return text.replace(/\{[^}]*\}/g, "").trim()
+}
+
 export class PicoClawWebSocket {
   private ws: WebSocket | null = null
   private sessionId = ""
@@ -371,7 +375,7 @@ export class PicoClawWebSocket {
   }
 
   private handlePush(push: PetPush): void {
-    const data = push.data || {}
+    const data = push.data ?? {}
 
     switch (push.push_type) {
       case PUSH_TYPE_AI_CHAT:
@@ -391,12 +395,42 @@ export class PicoClawWebSocket {
     }
   }
 
-  private handleAIChatPush(data: Record<string, unknown>): void {
-    const contentType = (data.type as string) || "text"
-    const text = (data.text as string) || ""
+  private handleAIChatPush(data: unknown): void {
     const timestamp = Date.now()
+    let contentType = "text"
+    let text = ""
+
+    if (typeof data === "string") {
+      try {
+        const parsed = JSON.parse(data) as Record<string, unknown>
+        contentType = (parsed.type as string) || "text"
+        text =
+          (parsed.text as string) ||
+          (parsed.Text as string) ||
+          (parsed.content as string) ||
+          data
+      } catch {
+        text = data
+      }
+    } else if (data && typeof data === "object") {
+      const payload = data as Record<string, unknown>
+      contentType =
+        (payload.type as string) ||
+        (payload.ContentType as string) ||
+        "text"
+      text =
+        (payload.text as string) ||
+        (payload.Text as string) ||
+        (payload.content as string) ||
+        ""
+    }
+
+    text = normalizeIncomingText(text)
 
     if (contentType === "tool") {
+      if (!text) {
+        return
+      }
       this.emit({
         type: "message",
         data: {
@@ -411,6 +445,9 @@ export class PicoClawWebSocket {
     }
 
     if (contentType === "text" || contentType === "") {
+      if (!text) {
+        return
+      }
       if (!this.activeAssistantMessageId) {
         this.activeAssistantMessageId = `assistant-${timestamp}`
         this.activeAssistantContent = ""
@@ -440,7 +477,14 @@ export class PicoClawWebSocket {
         this.activeAssistantContent += text
       }
 
-      const finalContent = this.activeAssistantContent || text
+      const finalContent = normalizeIncomingText(
+        this.activeAssistantContent || text,
+      )
+      if (!finalContent) {
+        this.emit({ type: "typing", data: "false" })
+        this.resetAssistantState()
+        return
+      }
       if (!this.activeAssistantMessageId) {
         this.activeAssistantMessageId = `assistant-${timestamp}`
         this.activeAssistantTimestamp = timestamp
@@ -461,8 +505,18 @@ export class PicoClawWebSocket {
     }
   }
 
-  private handleAudioPush(data: Record<string, unknown>): void {
-    this.emit({ type: "audio", data })
+  private handleAudioPush(data: unknown): void {
+    if (typeof data === "string") {
+      try {
+        this.emit({ type: "audio", data: JSON.parse(data) as Record<string, unknown> })
+        return
+      } catch {
+        this.emit({ type: "audio", data: { text: data } })
+        return
+      }
+    }
+
+    this.emit({ type: "audio", data: (data || {}) as Record<string, unknown> })
   }
 
   private handleEmotionChangePush(data: Record<string, unknown>): void {

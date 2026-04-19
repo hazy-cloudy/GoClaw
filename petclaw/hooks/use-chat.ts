@@ -49,8 +49,6 @@ interface AudioPushData {
 }
 
 const EMPTY_SESSION_TITLE = "新对话"
-const VOICE_FALLBACK_DELAY_MS = 1600
-
 function normalizeTimestamp(value: number | string): number {
   const numeric = typeof value === "number" ? value : Number(value)
   return Number.isFinite(numeric) ? numeric : Date.now()
@@ -72,18 +70,15 @@ function buildSessionSummary(session: ChatSessionState): ChatSessionSummary {
   const firstUserMessage = session.messages.find(
     (message) => message.role === "user" && message.content.trim(),
   )
-  const latestMessage = [...session.messages]
-    .reverse()
-    .find((message) => message.content.trim())
 
   return {
     id: session.id,
     title:
       (firstUserMessage?.content || EMPTY_SESSION_TITLE).trim().slice(0, 18) ||
       EMPTY_SESSION_TITLE,
-    preview: (latestMessage?.content || "").trim().slice(0, 48),
+    preview: "",
     updatedAt: normalizeTimestamp(
-      latestMessage?.timestamp ?? session.updatedAt,
+      firstUserMessage?.timestamp ?? session.updatedAt,
     ),
     messageCount: session.messages.length,
   }
@@ -165,9 +160,6 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     { chatId: null, chunks: [] },
   )
   const currentAudioRef = useRef<HTMLAudioElement | null>(null)
-  const voiceFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  )
   const lastAssistantTextRef = useRef("")
   const lastEmotionRef = useRef("neutral")
 
@@ -194,13 +186,6 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     [],
   )
 
-  const clearVoiceFallback = useCallback(() => {
-    if (voiceFallbackTimerRef.current) {
-      clearTimeout(voiceFallbackTimerRef.current)
-      voiceFallbackTimerRef.current = null
-    }
-  }, [])
-
   const showBubble = useCallback((text: string | null, audio?: string) => {
     window.electronAPI?.showBubble?.({
       text,
@@ -209,28 +194,11 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     })
   }, [])
 
-  const speakTextLocally = useCallback((text: string) => {
-    const content = text.trim()
-    if (!content || typeof window === "undefined" || !window.speechSynthesis) {
-      return
-    }
-
-    window.speechSynthesis.cancel()
-    const utterance = new SpeechSynthesisUtterance(content)
-    utterance.lang = "zh-CN"
-    utterance.rate = 1
-    utterance.pitch = 1
-    window.speechSynthesis.speak(utterance)
-  }, [])
-
   const playAudioBase64 = useCallback(
     (audioBase64: string) => {
       if (!audioBase64) {
         return
       }
-
-      clearVoiceFallback()
-      window.speechSynthesis?.cancel()
 
       if (window.electronAPI?.showBubble) {
         showBubble(lastAssistantTextRef.current || null, audioBase64)
@@ -246,23 +214,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         console.warn("[petclaw] failed to play audio", playbackError)
       })
     },
-    [clearVoiceFallback, showBubble],
-  )
-
-  const scheduleVoiceFallback = useCallback(
-    (text: string) => {
-      const content = text.trim()
-      if (!content) {
-        return
-      }
-
-      clearVoiceFallback()
-      showBubble(content)
-      voiceFallbackTimerRef.current = setTimeout(() => {
-        speakTextLocally(content)
-      }, VOICE_FALLBACK_DELAY_MS)
-    },
-    [clearVoiceFallback, showBubble, speakTextLocally],
+    [showBubble],
   )
 
   const connectWithBootstrap = useCallback(async () => {
@@ -323,7 +275,6 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
             setIsTyping(message.streaming ?? false)
             if (message.role === "assistant" && !message.streaming) {
               lastAssistantTextRef.current = message.content
-              scheduleVoiceFallback(message.content)
             }
             optionsRef.current.onMessage?.(message)
           }
@@ -421,13 +372,10 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
 
     return () => {
       unsubscribe()
-      clearVoiceFallback()
     }
   }, [
-    clearVoiceFallback,
     connectWithBootstrap,
     playAudioBase64,
-    scheduleVoiceFallback,
     updateSessionMessages,
   ])
 
@@ -449,7 +397,6 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         timestamp: Date.now(),
       }
 
-      clearVoiceFallback()
       updateSessionMessages(activeSessionIdRef.current, (prev) => [
         ...prev,
         userMessage,
@@ -459,15 +406,16 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
 
       wsRef.current.send(content.trim())
     },
-    [clearVoiceFallback, updateSessionMessages],
+    [updateSessionMessages],
   )
 
   const newChat = useCallback(async () => {
     const nextSessionId = wsRef.current.startNewSession()
     const nextSession = createSessionState(nextSessionId)
 
-    clearVoiceFallback()
-    window.speechSynthesis?.cancel()
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause()
+    }
     lastAssistantTextRef.current = ""
     audioStreamRef.current = { chatId: null, chunks: [] }
     setIsTyping(false)
@@ -487,7 +435,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     setActiveSessionId(nextSessionId)
 
     await connectWithBootstrap()
-  }, [clearVoiceFallback, connectWithBootstrap])
+  }, [connectWithBootstrap])
 
   const switchSession = useCallback(
     async (sessionId: string) => {
@@ -496,8 +444,9 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       }
 
       wsRef.current.useSession(sessionId)
-      clearVoiceFallback()
-      window.speechSynthesis?.cancel()
+      if (currentAudioRef.current) {
+        currentAudioRef.current.pause()
+      }
       audioStreamRef.current = { chatId: null, chunks: [] }
       lastAssistantTextRef.current = ""
       setIsTyping(false)
@@ -506,7 +455,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
 
       await connectWithBootstrap()
     },
-    [clearVoiceFallback, connectWithBootstrap],
+    [connectWithBootstrap],
   )
 
   const reconnect = useCallback(() => {
