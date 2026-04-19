@@ -12,6 +12,7 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $petclawDir = Join-Path $repoRoot "petclaw"
 $electronDir = Join-Path $repoRoot "electron-frontend"
+$mainBinary = Join-Path $repoRoot "picoclaw.exe"
 
 if ([string]::IsNullOrWhiteSpace($LauncherConfigPath)) {
   $LauncherConfigPath = Join-Path $repoRoot ".goclaw-runtime\config.json"
@@ -553,7 +554,8 @@ if (-not [string]::IsNullOrWhiteSpace($resolvedLauncherBin)) {
     $escapedLauncherToken = $LauncherToken.Replace("'", "''")
     $escapedLauncherConfigPath = $LauncherConfigPath.Replace("'", "''")
     $escapedConfigDir = $configDir.Replace("'", "''")
-    $launcherCmd = "`$env:PICOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:PICOCLAW_HOME='$escapedConfigDir'; `$env:PICOCLAW_CONFIG='$escapedLauncherConfigPath'; & '$resolvedLauncherBin' '$escapedLauncherConfigPath'"
+    $escapedMainBinary = $mainBinary.Replace("'", "''")
+    $launcherCmd = "`$env:PICOCLAW_BINARY='$escapedMainBinary'; `$env:PICOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:PICOCLAW_HOME='$escapedConfigDir'; `$env:PICOCLAW_CONFIG='$escapedLauncherConfigPath'; & '$resolvedLauncherBin' -no-browser '$escapedLauncherConfigPath'"
     Start-DetachedPowerShell -Title "GoClaw - Launcher" -Command $launcherCmd
 
     if (-not (Wait-HttpReady -Url "http://127.0.0.1:18800" -TimeoutSeconds 25)) {

@@ -34,6 +34,7 @@ export default function Home() {
   const [bootState, setBootState] = useState<"checking" | "onboarding" | "ready">("ready")
   const [uiMood, setUiMood] = useState<"low" | "medium" | "high" | "critical">("medium")
   const [readyVisible, setReadyVisible] = useState(false)
+  const [isElectronShell, setIsElectronShell] = useState(false)
 
   const applyMoodFromOnboardingState = () => {
     const state = loadOnboardingState()
@@ -44,6 +45,10 @@ export default function Home() {
     }
     setUiMood("medium")
   }
+
+  useEffect(() => {
+    setIsElectronShell(Boolean(window.electronAPI))
+  }, [])
 
   useEffect(() => {
     try {
@@ -145,7 +150,7 @@ export default function Home() {
 
   if (bootState === "onboarding") {
     return (
-      <div className="h-screen bg-transparent p-4 md:p-5">
+      <div className={`h-screen bg-transparent ${isElectronShell ? "p-0" : "p-4 md:p-5"}`}>
         <OnboardingWizard
           onFinish={() => {
             const url = new URL(window.location.href)
@@ -167,8 +172,8 @@ export default function Home() {
   } as const
 
   return (
-    <div className={`h-screen bg-transparent p-4 transition-all duration-500 ease-out md:p-5 ${readyVisible ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"}`}>
-      <div className={`flex h-full flex-col overflow-hidden rounded-3xl transition-[background-color,border-color,box-shadow] duration-700 ease-out ${shellByMood[uiMood]}`}>
+    <div className={`h-screen bg-transparent transition-all duration-500 ease-out ${isElectronShell ? "p-0" : "p-4 md:p-5"} ${readyVisible ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"}`}>
+      <div className={`flex h-full flex-col overflow-hidden transition-[background-color,border-color,box-shadow,border-radius] duration-700 ease-out ${isElectronShell ? "rounded-none border-0 shadow-none" : "rounded-3xl"} ${shellByMood[uiMood]}`}>
         <WindowControls title={`${activeNav} - PetClaw AI`} />
         <div className="flex min-h-0 flex-1" data-electron-no-drag="true">
           <Sidebar activeNav={activeNav} setActiveNav={setActiveNav} />

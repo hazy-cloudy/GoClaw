@@ -123,8 +123,10 @@ if ($Mode -eq "petclaw") {
     Write-Host "Starting PetClaw frontend in a new PowerShell window..."
     Start-Process powershell -ArgumentList @("-NoExit", "-Command", $petclawCommand) | Out-Null
 
-    Start-Sleep -Seconds 2
-    Start-Process "http://localhost:3000/onboarding"
+    if (-not $NoBrowser) {
+        Start-Sleep -Seconds 2
+        Start-Process "http://localhost:3000/onboarding"
+    }
 
     Write-Host "Done. Keep both windows open while using the app."
     exit 0

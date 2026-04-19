@@ -1,6 +1,9 @@
 import {
   API_ENDPOINTS,
+  DIRECT_PET_TOKEN_PATH,
+  DIRECT_PET_WS_PATH,
   getApiBaseUrl,
+  getDirectGatewayBaseUrl,
   getAuthRequestCredentials,
   getWsBaseUrl,
   withLauncherAuthHeader,
@@ -48,6 +51,13 @@ interface TokenResponse {
   ws_url?: string
 }
 
+interface TokenCandidate {
+  baseUrl: string
+  tokenPath: string
+  wsPath: string
+  useLauncherAuth: boolean
+}
+
 type WSMode = 'pet'
 type OutboundRequest = PetRequest
 
@@ -81,6 +91,9 @@ export class PicoClawWebSocket {
   private msgIdCounter = 0
   private lastConnectUrl = ''
   private manualClose = false
+  private activeAssistantMessageId: string | null = null
+  private activeAssistantContent = ''
+  private activeAssistantTimestamp = 0
   private openHandlers: {
     settle: () => void
     fail: (err: Error) => void
@@ -118,10 +131,10 @@ export class PicoClawWebSocket {
         if (!this.sessionId) {
           this.sessionId = this.generateSessionId()
         }
-        const { token, wsPath, mode } = await this.resolveTokenAndPath()
+        const { token, wsPath, wsBaseUrl, mode } = await this.resolveTokenAndPath()
         this.wsMode = mode
         const query = `session=${encodeURIComponent(this.sessionId)}&session_id=${encodeURIComponent(this.sessionId)}`
-        const url = `${getWsBaseUrl()}${wsPath}?${query}`
+        const url = `${wsBaseUrl}${wsPath}?${query}`
         this.connectWebSocket(url, token, mode)
       } catch (err) {
         this.openHandlers = null
@@ -130,37 +143,64 @@ export class PicoClawWebSocket {
     })
   }
 
-  private async resolveTokenAndPath(): Promise<{ token: string; wsPath: string; mode: WSMode }> {
-    const endpoint = { tokenPath: API_ENDPOINTS.PET.TOKEN, wsPath: API_ENDPOINTS.CHAT.WS }
+  private async resolveTokenAndPath(): Promise<{ token: string; wsPath: string; wsBaseUrl: string; mode: WSMode }> {
+    const candidates: TokenCandidate[] = [
+      {
+        baseUrl: getDirectGatewayBaseUrl(),
+        tokenPath: DIRECT_PET_TOKEN_PATH,
+        wsPath: DIRECT_PET_WS_PATH,
+        useLauncherAuth: false,
+      },
+      {
+        baseUrl: getApiBaseUrl(),
+        tokenPath: API_ENDPOINTS.PET.TOKEN,
+        wsPath: API_ENDPOINTS.CHAT.WS,
+        useLauncherAuth: true,
+      },
+    ]
 
-    const res = await fetch(`${getApiBaseUrl()}${endpoint.tokenPath}`, {
-      method: 'GET',
-      headers: withLauncherAuthHeader(),
-      credentials: getAuthRequestCredentials(`${getApiBaseUrl()}${endpoint.tokenPath}`),
-    })
+    let lastError = 'PET channel not available'
 
-    if (res.status === 404) {
-      throw new Error('PET channel not available')
+    for (const candidate of candidates) {
+      const input = `${candidate.baseUrl}${candidate.tokenPath}`
+      const res = await fetch(input, {
+        method: 'GET',
+        headers: candidate.useLauncherAuth ? withLauncherAuthHeader() : undefined,
+        credentials: candidate.useLauncherAuth ? getAuthRequestCredentials(input) : 'omit',
+      }).catch(() => null)
+
+      if (!res) {
+        lastError = `Token endpoint failed (${candidate.tokenPath}): network error`
+        continue
+      }
+
+      if (res.status === 404) {
+        lastError = 'PET channel not available'
+        continue
+      }
+
+      if (!res.ok) {
+        lastError = `Token endpoint failed (${candidate.tokenPath}): HTTP ${res.status}`
+        continue
+      }
+
+      const data = (await res.json()) as TokenResponse
+      if (!data.enabled) {
+        lastError = `Channel not enabled (${candidate.tokenPath})`
+        continue
+      }
+
+      const wsPathFromToken = this.normalizeWsPath(data.ws_url)
+      const wsBaseUrl = this.normalizeWsBaseUrl(data.ws_url, candidate.baseUrl)
+      return {
+        token: data.token || '',
+        wsPath: wsPathFromToken || candidate.wsPath,
+        wsBaseUrl,
+        mode: 'pet',
+      }
     }
 
-    if (!res.ok) {
-      throw new Error(`Token endpoint failed (${endpoint.tokenPath}): HTTP ${res.status}`)
-    }
-
-    const data = (await res.json()) as TokenResponse
-    if (!data.enabled) {
-      throw new Error(`Channel not enabled (${endpoint.tokenPath})`)
-    }
-    const wsPathFromToken = this.normalizeWsPath(data.ws_url)
-    const wsPath = wsPathFromToken || endpoint.wsPath
-    const mode: WSMode = 'pet'
-    const token = data.token || ''
-
-    return {
-      token,
-      wsPath,
-      mode,
-    }
+    throw new Error(lastError)
   }
 
   private normalizeWsPath(raw?: string): string {
@@ -180,6 +220,23 @@ export class PicoClawWebSocket {
     }
 
     return value.startsWith('/') ? value : `/${value}`
+  }
+
+  private normalizeWsBaseUrl(raw: string | undefined, fallbackBaseUrl: string): string {
+    if (raw && raw.trim()) {
+      try {
+        const parsed = new URL(raw)
+        return `${parsed.protocol}//${parsed.host}`
+      } catch {
+        // ignore and use fallback
+      }
+    }
+
+    if (fallbackBaseUrl === getApiBaseUrl()) {
+      return getWsBaseUrl()
+    }
+
+    return fallbackBaseUrl.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:')
   }
 
   private connectWebSocket(url: string, token: string, mode: WSMode): void {
@@ -267,16 +324,35 @@ export class PicoClawWebSocket {
   }
 
   private handleAIChatPush(data: Record<string, unknown>): void {
-    const chatId = (data.chat_id as number) || 0
     const contentType = (data.type as string) || 'text'
     const text = (data.text as string) || ''
+    const timestamp = Date.now()
 
-    if (contentType === 'text' || contentType === '') {
+    if (contentType === 'tool') {
       const chatMsg: ChatMessage = {
-        id: `msg-${chatId}`,
+        id: `tool-${timestamp}-${Math.random().toString(36).slice(2, 8)}`,
         role: 'assistant',
         content: text,
-        timestamp: Date.now(),
+        timestamp,
+        streaming: false,
+      }
+      this.emit({ type: 'message', data: chatMsg })
+      return
+    }
+
+    if (contentType === 'text' || contentType === '') {
+      if (!this.activeAssistantMessageId) {
+        this.activeAssistantMessageId = `assistant-${timestamp}`
+        this.activeAssistantContent = ''
+        this.activeAssistantTimestamp = timestamp
+      }
+
+      this.activeAssistantContent += text
+      const chatMsg: ChatMessage = {
+        id: this.activeAssistantMessageId,
+        role: 'assistant',
+        content: this.activeAssistantContent,
+        timestamp: this.activeAssistantTimestamp || timestamp,
         streaming: true,
       }
       this.emit({ type: 'message', data: chatMsg })
@@ -284,15 +360,32 @@ export class PicoClawWebSocket {
     }
 
     if (contentType === 'final') {
+      if (text) {
+        if (!this.activeAssistantMessageId) {
+          this.activeAssistantMessageId = `assistant-${timestamp}`
+          this.activeAssistantTimestamp = timestamp
+        }
+        this.activeAssistantContent += text
+      }
+
+      const finalContent = this.activeAssistantContent || text
+      if (!this.activeAssistantMessageId) {
+        this.activeAssistantMessageId = `assistant-${timestamp}`
+        this.activeAssistantTimestamp = timestamp
+      }
+
       const chatMsg: ChatMessage = {
-        id: `msg-${chatId}`,
+        id: this.activeAssistantMessageId,
         role: 'assistant',
-        content: text,
-        timestamp: Date.now(),
+        content: finalContent,
+        timestamp: this.activeAssistantTimestamp || timestamp,
         streaming: false,
       }
       this.emit({ type: 'message', data: chatMsg })
       this.emit({ type: 'typing', data: 'false' })
+      this.activeAssistantMessageId = null
+      this.activeAssistantContent = ''
+      this.activeAssistantTimestamp = 0
     }
   }
 
@@ -323,6 +416,9 @@ export class PicoClawWebSocket {
   }
 
   send(content: string): void {
+    this.activeAssistantMessageId = null
+    this.activeAssistantContent = ''
+    this.activeAssistantTimestamp = 0
     this.sendAction(CHAT_ACTION, {
       text: content,
       session_key: this.sessionId,
