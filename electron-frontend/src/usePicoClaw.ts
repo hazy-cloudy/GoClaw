@@ -281,10 +281,9 @@ export function usePicoClaw(apiBaseUrl: string, callbacks?: PicoCallbacks) {
       // Ignore launcher discovery failures and continue with static candidates.
     }
 
-    const bases = unique([
-      discoveredGatewayBase,
-      ...buildBaseCandidates(apiBaseRef.current),
-    ].filter(Boolean))
+    const bases = discoveredGatewayBase
+      ? unique([discoveredGatewayBase, ...buildBaseCandidates(apiBaseRef.current)])
+      : buildBaseCandidates(apiBaseRef.current)
 
     for (const base of bases) {
       const healthEndpoint = joinUrl(base, '/health')
