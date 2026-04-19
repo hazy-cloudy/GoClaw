@@ -198,6 +198,29 @@ func getGatewayHealthByURL(url string, timeout time.Duration) (*health.StatusRes
 	return &healthResponse, resp.StatusCode, nil
 }
 
+func (h *Handler) currentGatewayBaseURL(cfg *config.Config) string {
+	port := 18790
+	host := ""
+
+	gateway.mu.Lock()
+	if d := gateway.pidData; d != nil {
+		if d.Port > 0 {
+			port = d.Port
+		}
+		host = strings.TrimSpace(d.Host)
+	}
+	gateway.mu.Unlock()
+
+	if port == 18790 && cfg != nil && cfg.Gateway.Port != 0 {
+		port = cfg.Gateway.Port
+	}
+	if host == "" {
+		host = gatewayProbeHost(h.effectiveGatewayBindHost(cfg))
+	}
+
+	return "http://" + net.JoinHostPort(host, strconv.Itoa(port))
+}
+
 // registerGatewayRoutes binds gateway lifecycle endpoints to the ServeMux.
 func (h *Handler) registerGatewayRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/gateway/status", h.handleGatewayStatus)
@@ -244,7 +267,19 @@ func (h *Handler) TryAutoStartGateway() {
 	defer gateway.mu.Unlock()
 
 	if gateway.cmd != nil && gateway.cmd.Process != nil {
+		if isCmdProcessAliveLocked(gateway.cmd) {
+			logger.InfoC(
+				"gateway",
+				fmt.Sprintf("Gateway auto-start skipped: process already starting/running (PID: %d)", gateway.cmd.Process.Pid),
+			)
+			return
+		}
+
 		gateway.cmd = nil
+		gateway.owned = false
+		gateway.bootDefaultModel = ""
+		gateway.bootConfigSignature = ""
+		gateway.pidData = nil
 	}
 
 	ready, reason, err := h.gatewayStartReady()
@@ -764,7 +799,21 @@ func (h *Handler) handleGatewayStart(w http.ResponseWriter, r *http.Request) {
 	defer gateway.mu.Unlock()
 
 	if gateway.cmd != nil && gateway.cmd.Process != nil {
+		if isCmdProcessAliveLocked(gateway.cmd) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"status":         "ok",
+				"pid":            gateway.cmd.Process.Pid,
+				"gateway_status": gatewayStatusWithoutHealthLocked(),
+			})
+			return
+		}
+
 		gateway.cmd = nil
+		gateway.owned = false
+		gateway.bootDefaultModel = ""
+		gateway.bootConfigSignature = ""
+		gateway.pidData = nil
 		setGatewayRuntimeStatusLocked("stopped")
 	}
 
@@ -955,6 +1004,7 @@ func (h *Handler) gatewayStatusData() map[string]any {
 		if configDefaultModel != "" {
 			data["config_default_model"] = configDefaultModel
 		}
+		data["gateway_base_url"] = h.currentGatewayBaseURL(cfg)
 	}
 
 	// Primary detection: read PID file and check if process is alive.
