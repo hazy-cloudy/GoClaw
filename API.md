@@ -1,27 +1,44 @@
-﻿# API 接口文档（ClawPet 前端当前使用）
+# ClawPet API Notes
 
-本文档描述 `electron-frontend` 当前真实对接的接口（HTTP + WebSocket）。
+This document describes the interface shape currently used by the beige `petclaw` frontend and the desktop pet.
 
-- 网关基地址：`http://127.0.0.1:18790`
-- 通道协议：`pet`
-- 默认联调语言：中文
+Current facts:
 
-## 1. 联调目标（前端 + 后端）
+- the canonical console is `petclaw`
+- the primary chat transport is the `pet` websocket
+- chat sessions use frontend-generated `session_id`
+- voice playback relies on backend `audio` push
+- browser local TTS fallback is disabled
 
-1. 前端通过 Gateway 获取连接信息：`GET /pet/token`
-2. 前端连接 WebSocket：`ws://127.0.0.1:18790/pet/ws`
-3. 前端收发核心动作：`chat`、`onboarding_config`、`emotion_get`
-4. 前端消费核心推送：`init_status`、`ai_chat`、`emotion_change`、`audio`
+## Base Addresses
 
-## 2. HTTP 接口
+- launcher: `http://127.0.0.1:18800`
+- gateway: `http://127.0.0.1:18790`
+- petclaw console: `http://127.0.0.1:3000`
+- desktop renderer: `http://127.0.0.1:5173`
 
-### 2.1 获取 pet 连接信息
+## Frontend Boot Flow
+
+Typical `petclaw` boot flow:
+
+1. validate launcher auth session
+2. check gateway status
+3. run `/api/pet/setup` when needed
+4. fetch token + `ws_url`
+5. connect `pet` websocket
+6. send `chat`
+7. consume `init_status`, `ai_chat`, `audio`, `emotion_change`, etc.
+
+## HTTP Endpoints
+
+### Direct gateway token
 
 - Method: `GET`
 - Path: `/pet/token`
-- 用途: 前端获取 `ws_url` 后建立 WebSocket
+- Host: gateway `127.0.0.1:18790`
+- Purpose: return `ws_url` and protocol data for websocket connection
 
-示例响应：
+Example response:
 
 ```json
 {
@@ -32,70 +49,89 @@
 }
 ```
 
-### 2.2 获取技能列表
+### Launcher auth status
 
 - Method: `GET`
-- Path: `/api/skills`
-- 用途: 设置页“技能”模块
+- Path: `/api/auth/status`
+- Host: launcher `127.0.0.1:18800`
+- Purpose: `petclaw` uses this before chat bootstrap
 
-### 2.3 获取工具列表
-
-- Method: `GET`
-- Path: `/api/tools`
-- 用途: 设置页“工具开关”模块
-
-### 2.4 更新工具开关
-
-- Method: `PUT`
-- Path: `/api/tools/{name}/state`
-- Body:
-
-```json
-{
-  "enabled": true
-}
-```
-
-### 2.5 获取频道目录
+### Gateway status
 
 - Method: `GET`
-- Path: `/api/channels/catalog`
-- 用途: 设置页“频道”模块
+- Path: `/api/gateway/status`
+- Host: launcher `127.0.0.1:18800`
 
-### 2.6 获取单个频道配置
+### Start gateway
+
+- Method: `POST`
+- Path: `/api/gateway/start`
+- Host: launcher `127.0.0.1:18800`
+
+### Gateway logs
 
 - Method: `GET`
-- Path: `/api/channels/{name}/config`
-- 用途: 展示 `enabled` 与 `configured_secrets`
+- Path: `/api/gateway/logs`
+- Host: launcher `127.0.0.1:18800`
 
-## 3. WebSocket 接口
+### Pet setup
 
-### 3.1 建连
+- Method: `POST`
+- Path: `/api/pet/setup`
+- Host: launcher `127.0.0.1:18800`
+
+Notes:
+
+- if `/api/pet/setup` is unavailable, the frontend may try `/api/pico/setup`
+
+### Pet token via launcher proxy
+
+- Method: `GET`
+- Path: `/api/pet/token`
+- Host: launcher `127.0.0.1:18800`
+
+Notes:
+
+- if `/api/pet/token` is unavailable, the frontend may try `/api/pico/token`
+
+## WebSocket
+
+### Connection URL
 
 - URL: `ws://127.0.0.1:18790/pet/ws`
-- 来源: `/pet/token` 返回的 `ws_url`
+- Source: `ws_url` returned from `/pet/token`
 
-建连后服务端会推送 `init_status`。
+The frontend attaches both:
 
-### 3.2 客户端请求格式
+- `session`
+- `session_id`
+
+using the same frontend-generated local session id.
+
+### Client request format
+
+Current chat request shape:
 
 ```json
 {
   "action": "chat",
-  "data": { "text": "你好", "session_key": "pet:default:go-claw" },
-  "request_id": "req_..."
+  "data": {
+    "text": "你好",
+    "session_key": "session-1710000000000-abcdef123"
+  },
+  "request_id": "req-1-1710000000000"
 }
 ```
 
-当前前端已使用 action：
+Actions currently used or expected:
 
 - `chat`
 - `onboarding_config`
 - `emotion_get`
-- `health_check`
-- `tool_result`
 
-### 3.3 服务端响应格式（动作响应）
+### Action response format
+
+Success example:
 
 ```json
 {
@@ -108,57 +144,197 @@
 }
 ```
 
-错误响应：
+Error examples:
 
 ```json
 {
   "status": "error",
   "action": "chat",
-  "data": { "error": "LLM call failed" }
+  "error": "LLM call failed"
 }
 ```
 
-### 3.4 服务端推送格式（push）
+or:
+
+```json
+{
+  "status": "error",
+  "action": "chat",
+  "data": {
+    "error": "LLM call failed"
+  }
+}
+```
+
+## Push Messages
+
+### Envelope
 
 ```json
 {
   "type": "push",
   "push_type": "ai_chat",
-  "data": { "text": "...", "emotion": "joy", "type": "text" },
+  "data": {},
   "timestamp": 1710000000,
   "is_final": false
 }
 ```
 
-常见 `push_type`：
+### `init_status`
 
-- `init_status`：首次连接初始化状态
-- `ai_chat`：聊天流式增量/结束块
-- `emotion_change`：情绪变化
-- `audio`：语音片段
-- `heartbeat`：心跳
+Purpose:
 
-## 4. 引导页初始化流程（已对接）
+- initial session state
+- used to decide whether onboarding should be shown
 
-1. 前端调用 `GET /pet/token`
-2. 前端连接 `ws://.../pet/ws`
-3. 后端推送 `push_type=init_status`
-4. 若 `need_config=true`，前端显示 onboarding 表单
-5. 用户提交后发送 `action=onboarding_config`
-6. 收到成功后发送 `action=emotion_get`
-7. 关闭 onboarding，进入聊天
+### `ai_chat`
 
-校验规则：
+Purpose:
 
-- `pet_name` 长度：2-24
-- `pet_persona` 长度：8-300
-- `pet_persona_type`：`gentle | playful | cool`
-- 未连接后端时禁止提交
+- assistant streaming text
+- assistant final text
+- tool text blocks
 
-## 5. 联调排错清单
+The frontend now accepts `data` in 3 forms:
 
-1. `GET /health` 必须 `200`
-2. `GET /ready` 建议 `200`
-3. `GET /pet/token` 必须 `200`
-4. 前端 Network 中必须出现 `ws://127.0.0.1:18790/pet/ws`
-5. 如果发送 `chat` 后无回复，检查后端日志和模型配置
+1. object
+2. JSON string
+3. raw text string
+
+Example object payload:
+
+```json
+{
+  "text": "你好呀",
+  "emotion": "joy",
+  "type": "text"
+}
+```
+
+Final block:
+
+```json
+{
+  "text": "完整回复",
+  "type": "final"
+}
+```
+
+Tool block:
+
+```json
+{
+  "text": "正在查询日历",
+  "type": "tool"
+}
+```
+
+Notes:
+
+- `petclaw` strips `{...}` noise fragments from assistant text
+- long replies previously appeared missing because early parsing only assumed object payloads; string and JSON-string forms are now handled
+
+### `audio`
+
+Purpose:
+
+- backend TTS audio chunks
+
+Accepted frontend payload shapes:
+
+1. object
+2. JSON string
+3. raw base64 string
+
+Typical object payload:
+
+```json
+{
+  "chat_id": 1,
+  "type": "audio",
+  "text": "<base64-audio>",
+  "is_final": false
+}
+```
+
+Final block:
+
+```json
+{
+  "chat_id": 1,
+  "type": "audio",
+  "text": "<base64-audio>",
+  "is_final": true
+}
+```
+
+Error block:
+
+```json
+{
+  "chat_id": 1,
+  "type": "error",
+  "text": "tts failed"
+}
+```
+
+Frontend behavior:
+
+- aggregate chunks by `chat_id`
+- merge on `is_final=true`
+- play the merged audio
+- no automatic browser TTS fallback
+
+### `emotion_change`
+
+Purpose:
+
+- update pet emotion state
+
+### `action_trigger`
+
+Purpose:
+
+- trigger pet action or UI hints
+
+### `heartbeat`
+
+Purpose:
+
+- connection keepalive
+
+## Onboarding Flow
+
+Current onboarding flow:
+
+1. frontend connects the `pet` websocket
+2. backend pushes `init_status`
+3. if `need_config=true`, frontend shows onboarding
+4. user submits `onboarding_config`
+5. frontend sends `emotion_get`
+6. onboarding closes and chat starts
+
+Current validation rules:
+
+- `pet_name`: `2-24`
+- `pet_persona`: `8-300`
+- `pet_persona_type`: `gentle | playful | cool`
+- onboarding submit is blocked when backend is unavailable
+
+## Sessions And History
+
+Current `petclaw` session behavior:
+
+- each chat session uses a frontend-generated local session id
+- `New Chat` generates a fresh session id and reconnects websocket
+- left-side history shows only the first user message from each session
+- this is not a server-persisted history API yet
+
+## Troubleshooting Checklist
+
+1. `GET http://127.0.0.1:18800/api/gateway/status` returns successfully
+2. `GET http://127.0.0.1:18790/health` returns `200`
+3. `GET http://127.0.0.1:18790/pet/token` returns `200`
+4. DevTools shows `ws://127.0.0.1:18790/pet/ws?...session_id=...`
+5. if there is text but no voice, check whether `push_type=audio` was actually sent
+6. if long replies appear missing, inspect the raw `ai_chat` payload shape in WS frames
