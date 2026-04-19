@@ -461,6 +461,24 @@ func TestHandleGatewayStartReusesAliveTrackedProcess(t *testing.T) {
 	}
 }
 
+func TestCurrentGatewayBaseURLPrefersRuntimePidData(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	h := NewHandler(configPath)
+
+	cfg := config.DefaultConfig()
+	cfg.Gateway.Host = "127.0.0.1"
+	cfg.Gateway.Port = 18790
+
+	pidData := &ppid.PidFileData{
+		Host: "127.0.0.1",
+		Port: 18888,
+	}
+
+	if got := h.currentGatewayBaseURL(cfg, pidData); got != "http://127.0.0.1:18888" {
+		t.Fatalf("currentGatewayBaseURL() = %q, want %q", got, "http://127.0.0.1:18888")
+	}
+}
+
 func TestGatewayStatusKeepsRunningWhenHealthProbeFailsAfterRunning(t *testing.T) {
 	resetGatewayTestState(t)
 

@@ -198,18 +198,25 @@ func getGatewayHealthByURL(url string, timeout time.Duration) (*health.StatusRes
 	return &healthResponse, resp.StatusCode, nil
 }
 
-func (h *Handler) currentGatewayBaseURL(cfg *config.Config) string {
+func (h *Handler) currentGatewayBaseURL(cfg *config.Config, runtimePIDData *ppid.PidFileData) string {
 	port := 18790
 	host := ""
 
-	gateway.mu.Lock()
-	if d := gateway.pidData; d != nil {
-		if d.Port > 0 {
-			port = d.Port
+	if runtimePIDData != nil {
+		if runtimePIDData.Port > 0 {
+			port = runtimePIDData.Port
 		}
-		host = strings.TrimSpace(d.Host)
+		host = strings.TrimSpace(runtimePIDData.Host)
+	} else {
+		gateway.mu.Lock()
+		if d := gateway.pidData; d != nil {
+			if d.Port > 0 {
+				port = d.Port
+			}
+			host = strings.TrimSpace(d.Host)
+		}
+		gateway.mu.Unlock()
 	}
-	gateway.mu.Unlock()
 
 	if port == 18790 && cfg != nil && cfg.Gateway.Port != 0 {
 		port = cfg.Gateway.Port
@@ -1004,7 +1011,6 @@ func (h *Handler) gatewayStatusData() map[string]any {
 		if configDefaultModel != "" {
 			data["config_default_model"] = configDefaultModel
 		}
-		data["gateway_base_url"] = h.currentGatewayBaseURL(cfg)
 	}
 
 	// Primary detection: read PID file and check if process is alive.
@@ -1037,6 +1043,10 @@ func (h *Handler) gatewayStatusData() map[string]any {
 		data["gateway_status"] = gatewayStatusWithoutHealthLocked()
 		gateway.pidData = nil
 		gateway.mu.Unlock()
+	}
+
+	if cfg != nil {
+		data["gateway_base_url"] = h.currentGatewayBaseURL(cfg, pidData)
 	}
 
 	gatewayStatus, _ := data["gateway_status"].(string)

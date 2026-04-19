@@ -76,6 +76,16 @@ async function fetchDirectGatewayHealth(baseUrl?: string): Promise<{ uptime?: st
   }
 }
 
+export interface GatewayStatus {
+  running: boolean
+  state: 'stopped' | 'starting' | 'running' | 'stopping' | 'restarting'
+  pid?: number
+  restartRequired: boolean
+  startAllowed?: boolean
+  startReason?: string
+  uptime?: string
+}
+
 // 认证 API
 export const authApi = {
   login: (token: string) =>
@@ -96,7 +106,7 @@ export const authApi = {
 
 // 网关 API
 export const gatewayApi = {
-  status: async () => {
+  status: async (): Promise<GatewayStatus> => {
     let raw:
       | {
           gateway_status?: 'stopped' | 'starting' | 'running' | 'stopping' | 'restarting' | 'error'
