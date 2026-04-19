@@ -418,10 +418,6 @@ export async function switchChatSession(sessionId: string) {
 }
 
 export async function newChatSession() {
-  if (getChatState().messages.length === 0) {
-    return
-  }
-
   disconnectChatInternal({ clearDesiredConnection: false })
   setActiveSessionId(generateSessionId())
   updateChatStore({

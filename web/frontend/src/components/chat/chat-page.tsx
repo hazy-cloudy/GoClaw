@@ -94,6 +94,12 @@ export function ChatPage() {
   const showToolDisabledHint =
     isChatConnected && enabledToolCount !== undefined && enabledToolCount <= 0
 
+  const handleNewChat = () => {
+    setInput("")
+    setAttachments([])
+    void newChat()
+  }
+
   const {
     sessions,
     hasMore,
@@ -104,7 +110,7 @@ export function ChatPage() {
     handleDeleteSession,
   } = useSessionHistory({
     activeSessionId,
-    onDeletedActiveSession: newChat,
+    onDeletedActiveSession: handleNewChat,
   })
 
   const syncScrollState = (element: HTMLDivElement) => {
@@ -221,7 +227,7 @@ export function ChatPage() {
         <Button
           variant="secondary"
           size="sm"
-          onClick={newChat}
+          onClick={handleNewChat}
           className="h-9 gap-2"
         >
           <IconPlus className="size-4" />

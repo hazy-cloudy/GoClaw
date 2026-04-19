@@ -117,7 +117,13 @@ function buildDashboardUrl(pathname = '') {
   return withLauncherToken(resolved);
 }
 
-function createSettingsWindow(targetUrl = buildDashboardUrl()) {
+function buildSettingsWindowUrl({ onboarding = false } = {}) {
+  return onboarding
+    ? buildDashboardUrl('/onboarding?mode=rerun')
+    : buildDashboardUrl();
+}
+
+function createSettingsWindow(targetUrl = buildSettingsWindowUrl()) {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     if (targetUrl && settingsWindow.webContents.getURL() !== targetUrl) {
       settingsWindow.loadURL(targetUrl).catch((err) => {
@@ -184,12 +190,12 @@ function createSettingsWindow(targetUrl = buildDashboardUrl()) {
 
 ipcMain.on('open-settings', () => {
   logToFile('[IPC] open-settings');
-  createSettingsWindow(buildDashboardUrl());
+  createSettingsWindow(buildSettingsWindowUrl());
 });
 
 ipcMain.on('open-onboarding', () => {
   logToFile('[IPC] open-onboarding');
-  createSettingsWindow(buildDashboardUrl('/onboarding?mode=rerun'));
+  createSettingsWindow(buildSettingsWindowUrl({ onboarding: true }));
 });
 
 ipcMain.on('set-onboarding-mode', (event, enabled) => {

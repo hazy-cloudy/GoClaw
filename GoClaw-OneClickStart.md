@@ -18,9 +18,11 @@ From `D:\opencode\GoClaw` run:
 powershell -ExecutionPolicy Bypass -File .\GoClaw-OneClickStart.ps1
 ```
 
-This starts backend + PetClaw frontend and opens:
+This delegates to `scripts/run-goclaw-dev.ps1` and starts the full local stack:
 
-- `http://localhost:3000/onboarding`
+- launcher: `127.0.0.1:18800`
+- PetClaw dashboard: `127.0.0.1:3000`
+- desktop pet renderer: `127.0.0.1:5173`
 
 ## Launcher mode
 
@@ -30,7 +32,7 @@ powershell -ExecutionPolicy Bypass -File .\GoClaw-OneClickStart.ps1 -Mode launch
 
 This starts the Web UI launcher (`picoclaw-web.exe`).
 
-## Alternative: dev mode (backend + electron frontend)
+## Alternative: dev mode
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\GoClaw-OneClickStart.ps1 -Mode dev
@@ -38,16 +40,15 @@ powershell -ExecutionPolicy Bypass -File .\GoClaw-OneClickStart.ps1 -Mode dev
 
 What it does:
 
-1. Checks `go` and `npm` are available.
-2. Installs frontend dependencies if `electron-frontend\node_modules` is missing.
-3. Opens two PowerShell windows:
-   - backend: `go run -tags "goolm,stdjson" ./cmd/picoclaw gateway`
-   - frontend: `npm run start` in `electron-frontend`
+1. Delegates to `scripts/run-goclaw-dev.ps1`.
+2. Starts launcher + gateway.
+3. Starts the beige `petclaw` dashboard with onboarding on `127.0.0.1:3000`.
+4. Starts the Electron desktop pet and points its settings/onboarding window at the `petclaw` dashboard.
 
 ## Optional flags
 
 - `-NoBrowser`: launcher mode only, do not auto-open browser.
-- `-SkipNpmInstall`: skip auto `npm install` (dev / petclaw modes).
+- `-SkipNpmInstall`: ignored when delegating to `scripts/run-goclaw-dev.ps1`.
 
 Examples:
 
