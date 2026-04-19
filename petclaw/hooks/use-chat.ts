@@ -1,8 +1,13 @@
 "use client"
 
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { getWebSocketInstance, type ChatMessage, type WSEvent } from '@/lib/api'
-import { ensureBackendReadyForChat } from '@/lib/api/bootstrap'
+import { useCallback, useEffect, useRef, useState } from "react"
+
+import { ensureBackendReadyForChat } from "@/lib/api/bootstrap"
+import {
+  getWebSocketInstance,
+  type ChatMessage,
+  type WSEvent,
+} from "@/lib/api"
 
 export interface UseChatOptions {
   onMessage?: (message: ChatMessage) => void
@@ -10,13 +15,255 @@ export interface UseChatOptions {
   onConnectionChange?: (connected: boolean) => void
 }
 
-export function useChat(options: UseChatOptions = {}) {
-  const [messages, setMessages] = useState<ChatMessage[]>([])
+export interface ChatSessionSummary {
+  id: string
+  title: string
+  preview: string
+  updatedAt: number
+  messageCount: number
+}
+
+interface ChatSessionState extends ChatSessionSummary {
+  messages: ChatMessage[]
+}
+
+export interface UseChatResult {
+  messages: ChatMessage[]
+  sessions: ChatSessionSummary[]
+  activeSessionId: string
+  isConnected: boolean
+  isTyping: boolean
+  error: string | null
+  sendMessage: (content: string) => void
+  newChat: () => Promise<void>
+  switchSession: (sessionId: string) => Promise<void>
+  reconnect: () => void
+  clearError: () => void
+}
+
+interface AudioPushData {
+  chat_id?: number
+  type?: string
+  text?: string
+  is_final?: boolean
+}
+
+const EMPTY_SESSION_TITLE = "新对话"
+const VOICE_FALLBACK_DELAY_MS = 1600
+
+function normalizeTimestamp(value: number | string): number {
+  const numeric = typeof value === "number" ? value : Number(value)
+  return Number.isFinite(numeric) ? numeric : Date.now()
+}
+
+function createSessionState(id: string): ChatSessionState {
+  const now = Date.now()
+  return {
+    id,
+    title: EMPTY_SESSION_TITLE,
+    preview: "",
+    updatedAt: now,
+    messageCount: 0,
+    messages: [],
+  }
+}
+
+function buildSessionSummary(session: ChatSessionState): ChatSessionSummary {
+  const firstUserMessage = session.messages.find(
+    (message) => message.role === "user" && message.content.trim(),
+  )
+  const latestMessage = [...session.messages]
+    .reverse()
+    .find((message) => message.content.trim())
+
+  return {
+    id: session.id,
+    title:
+      (firstUserMessage?.content || EMPTY_SESSION_TITLE).trim().slice(0, 18) ||
+      EMPTY_SESSION_TITLE,
+    preview: (latestMessage?.content || "").trim().slice(0, 48),
+    updatedAt: normalizeTimestamp(
+      latestMessage?.timestamp ?? session.updatedAt,
+    ),
+    messageCount: session.messages.length,
+  }
+}
+
+function mergeMessage(
+  messages: ChatMessage[],
+  message: ChatMessage,
+): ChatMessage[] {
+  const existingIndex = messages.findIndex((item) => item.id === message.id)
+  if (existingIndex >= 0) {
+    const next = [...messages]
+    next[existingIndex] = message
+    return next
+  }
+  return [...messages, message]
+}
+
+function decodeBase64Chunk(value: string): Uint8Array | null {
+  const base64 = value
+    .replace(/^data:audio\/[^;]+;base64,/, "")
+    .replace(/\s+/g, "")
+
+  if (!base64) {
+    return new Uint8Array()
+  }
+
+  try {
+    const binary = window.atob(base64)
+    const bytes = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i)
+    }
+    return bytes
+  } catch (error) {
+    console.warn("[petclaw] dropped malformed audio chunk", error)
+    return null
+  }
+}
+
+function mergeAudioChunks(chunks: Uint8Array[]): Uint8Array {
+  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0)
+  const merged = new Uint8Array(totalLength)
+  let offset = 0
+  for (const chunk of chunks) {
+    merged.set(chunk, offset)
+    offset += chunk.length
+  }
+  return merged
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  if (bytes.length === 0) {
+    return ""
+  }
+
+  let binary = ""
+  for (let i = 0; i < bytes.length; i += 1) {
+    binary += String.fromCharCode(bytes[i])
+  }
+  return window.btoa(binary)
+}
+
+export function useChat(options: UseChatOptions = {}): UseChatResult {
   const [isConnected, setIsConnected] = useState(false)
   const [isTyping, setIsTyping] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const wsRef = useRef(getWebSocketInstance())
   const optionsRef = useRef(options)
+  const initialSessionIdRef = useRef(wsRef.current.ensureSessionId())
+  const [activeSessionId, setActiveSessionId] = useState(
+    initialSessionIdRef.current,
+  )
+  const [sessionsState, setSessionsState] = useState<ChatSessionState[]>([
+    createSessionState(initialSessionIdRef.current),
+  ])
+  const activeSessionIdRef = useRef(activeSessionId)
+  const audioStreamRef = useRef<{ chatId: number | null; chunks: Uint8Array[] }>(
+    { chatId: null, chunks: [] },
+  )
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null)
+  const voiceFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  )
+  const lastAssistantTextRef = useRef("")
+  const lastEmotionRef = useRef("neutral")
+
+  const updateSessionMessages = useCallback(
+    (sessionId: string, updater: (messages: ChatMessage[]) => ChatMessage[]) => {
+      setSessionsState((prev) =>
+        prev.map((session) => {
+          if (session.id !== sessionId) {
+            return session
+          }
+
+          const nextMessages = updater(session.messages)
+          return {
+            ...session,
+            ...buildSessionSummary({
+              ...session,
+              messages: nextMessages,
+            }),
+            messages: nextMessages,
+          }
+        }),
+      )
+    },
+    [],
+  )
+
+  const clearVoiceFallback = useCallback(() => {
+    if (voiceFallbackTimerRef.current) {
+      clearTimeout(voiceFallbackTimerRef.current)
+      voiceFallbackTimerRef.current = null
+    }
+  }, [])
+
+  const showBubble = useCallback((text: string | null, audio?: string) => {
+    window.electronAPI?.showBubble?.({
+      text,
+      emotion: lastEmotionRef.current,
+      audio,
+    })
+  }, [])
+
+  const speakTextLocally = useCallback((text: string) => {
+    const content = text.trim()
+    if (!content || typeof window === "undefined" || !window.speechSynthesis) {
+      return
+    }
+
+    window.speechSynthesis.cancel()
+    const utterance = new SpeechSynthesisUtterance(content)
+    utterance.lang = "zh-CN"
+    utterance.rate = 1
+    utterance.pitch = 1
+    window.speechSynthesis.speak(utterance)
+  }, [])
+
+  const playAudioBase64 = useCallback(
+    (audioBase64: string) => {
+      if (!audioBase64) {
+        return
+      }
+
+      clearVoiceFallback()
+      window.speechSynthesis?.cancel()
+
+      if (window.electronAPI?.showBubble) {
+        showBubble(lastAssistantTextRef.current || null, audioBase64)
+        return
+      }
+
+      const audioUrl = `data:audio/mp3;base64,${audioBase64}`
+      if (currentAudioRef.current) {
+        currentAudioRef.current.pause()
+      }
+      currentAudioRef.current = new Audio(audioUrl)
+      void currentAudioRef.current.play().catch((playbackError) => {
+        console.warn("[petclaw] failed to play audio", playbackError)
+      })
+    },
+    [clearVoiceFallback, showBubble],
+  )
+
+  const scheduleVoiceFallback = useCallback(
+    (text: string) => {
+      const content = text.trim()
+      if (!content) {
+        return
+      }
+
+      clearVoiceFallback()
+      showBubble(content)
+      voiceFallbackTimerRef.current = setTimeout(() => {
+        speakTextLocally(content)
+      }, VOICE_FALLBACK_DELAY_MS)
+    },
+    [clearVoiceFallback, showBubble, speakTextLocally],
+  )
 
   const connectWithBootstrap = useCallback(async () => {
     setError(null)
@@ -24,7 +271,7 @@ export function useChat(options: UseChatOptions = {}) {
 
     const bootstrap = await ensureBackendReadyForChat()
     if (!bootstrap.ok) {
-      const reason = bootstrap.reason || 'Backend not ready for chat'
+      const reason = bootstrap.reason || "Backend not ready for chat"
       setIsConnected(false)
       setError(reason)
       optionsRef.current.onConnectionChange?.(false)
@@ -37,8 +284,8 @@ export function useChat(options: UseChatOptions = {}) {
     try {
       await wsRef.current.connect()
     } catch (err) {
-      setError('连接失败')
-      console.error('WebSocket connection failed:', err)
+      setError("连接失败")
+      console.error("WebSocket connection failed:", err)
     }
   }, [])
 
@@ -47,111 +294,229 @@ export function useChat(options: UseChatOptions = {}) {
   }, [options])
 
   useEffect(() => {
+    activeSessionIdRef.current = activeSessionId
+  }, [activeSessionId])
+
+  useEffect(() => {
     const ws = wsRef.current
 
     const handleEvent = (event: WSEvent) => {
       switch (event.type) {
-        case 'connected':
+        case "connected":
           setIsConnected(true)
           setError(null)
           optionsRef.current.onConnectionChange?.(true)
           break
 
-        case 'disconnected':
+        case "disconnected":
           setIsConnected(false)
           setIsTyping(false)
           optionsRef.current.onConnectionChange?.(false)
           break
 
-        case 'message':
-          if (typeof event.data === 'object' && event.data) {
+        case "message":
+          if (typeof event.data === "object" && event.data) {
             const message = event.data as ChatMessage
-            setMessages((prev) => {
-              const existingIndex = prev.findIndex((m) => m.id === message.id)
-              if (existingIndex >= 0) {
-                const newMessages = [...prev]
-                newMessages[existingIndex] = message
-                return newMessages
-              }
-              return [...prev, message]
-            })
+            updateSessionMessages(activeSessionIdRef.current, (prev) =>
+              mergeMessage(prev, message),
+            )
             setIsTyping(message.streaming ?? false)
+            if (message.role === "assistant" && !message.streaming) {
+              lastAssistantTextRef.current = message.content
+              scheduleVoiceFallback(message.content)
+            }
             optionsRef.current.onMessage?.(message)
           }
           break
 
-        case 'typing':
-          const isTypingValue = typeof event.data === 'string' ? event.data === 'true' : true
-          setIsTyping(isTypingValue)
+        case "audio": {
+          const data = event.data as AudioPushData | undefined
+          if (!data) {
+            break
+          }
+
+          if (data.type === "error") {
+            audioStreamRef.current = { chatId: null, chunks: [] }
+            break
+          }
+
+          const hasExplicitChatId =
+            typeof data.chat_id === "number" && Number.isFinite(data.chat_id)
+          const incomingChatId = hasExplicitChatId ? data.chat_id ?? null : null
+
+          let currentStream = audioStreamRef.current
+          if (hasExplicitChatId) {
+            if (currentStream.chatId !== incomingChatId) {
+              currentStream = { chatId: incomingChatId, chunks: [] }
+              audioStreamRef.current = currentStream
+            }
+          } else if (currentStream.chatId !== null) {
+            currentStream = { chatId: null, chunks: [] }
+            audioStreamRef.current = currentStream
+          }
+
+          if (data.text) {
+            const chunkBytes = decodeBase64Chunk(data.text)
+            if (chunkBytes === null) {
+              audioStreamRef.current = { chatId: null, chunks: [] }
+              break
+            }
+            if (chunkBytes.length > 0) {
+              currentStream.chunks.push(chunkBytes)
+            }
+          }
+
+          if (!data.is_final) {
+            break
+          }
+
+          const merged = mergeAudioChunks(currentStream.chunks)
+          audioStreamRef.current = { chatId: null, chunks: [] }
+          const audioBase64 = bytesToBase64(merged)
+          if (audioBase64) {
+            playAudioBase64(audioBase64)
+          }
+          break
+        }
+
+        case "typing":
+          setIsTyping(
+            typeof event.data === "string" ? event.data === "true" : true,
+          )
           break
 
-        case 'error':
-          const errorMsg = typeof event.data === 'string' ? event.data : 'Unknown error'
+        case "error": {
+          const errorMsg =
+            typeof event.data === "string" ? event.data : "Unknown error"
           setError(errorMsg)
           setIsTyping(false)
           optionsRef.current.onError?.(errorMsg)
           break
+        }
 
-        case 'reconnecting':
-          setError('正在重新连接...')
+        case "reconnecting":
+          setError("正在重新连接...")
           setIsTyping(false)
           break
 
-        case 'emotion_change':
+        case "emotion_change":
+          if (typeof event.data === "string" && event.data.trim()) {
+            lastEmotionRef.current = event.data.trim()
+          }
           break
 
-        case 'action_trigger':
+        case "action_trigger":
           break
       }
     }
 
     const unsubscribe = ws.subscribe(handleEvent)
 
-    connectWithBootstrap().catch((err) => {
-      const message = err instanceof Error ? err.message : 'Backend bootstrap failed'
+    void connectWithBootstrap().catch((err) => {
+      const message =
+        err instanceof Error ? err.message : "Backend bootstrap failed"
       setError(message)
-      console.error('Chat bootstrap failed:', err)
+      console.error("Chat bootstrap failed:", err)
     })
 
     return () => {
       unsubscribe()
+      clearVoiceFallback()
     }
-  }, [connectWithBootstrap])
+  }, [
+    clearVoiceFallback,
+    connectWithBootstrap,
+    playAudioBase64,
+    scheduleVoiceFallback,
+    updateSessionMessages,
+  ])
 
-  const sendMessage = useCallback((content: string) => {
-    if (!content.trim()) return
+  const sendMessage = useCallback(
+    (content: string) => {
+      if (!content.trim()) {
+        return
+      }
 
-    if (!wsRef.current.isConnected) {
-      setError('当前连接不可用，请先重连后再发送')
-      return
-    }
+      if (!wsRef.current.isConnected) {
+        setError("当前连接不可用，请先重连后再发送")
+        return
+      }
 
-    const userMessage: ChatMessage = {
-      id: `user-${Date.now()}`,
-      role: 'user',
-      content: content.trim(),
-      timestamp: Date.now(),
-    }
+      const userMessage: ChatMessage = {
+        id: `user-${Date.now()}`,
+        role: "user",
+        content: content.trim(),
+        timestamp: Date.now(),
+      }
 
-    setMessages((prev) => [...prev, userMessage])
-    setIsTyping(true)
+      clearVoiceFallback()
+      updateSessionMessages(activeSessionIdRef.current, (prev) => [
+        ...prev,
+        userMessage,
+      ])
+      setIsTyping(true)
+      setError(null)
+
+      wsRef.current.send(content.trim())
+    },
+    [clearVoiceFallback, updateSessionMessages],
+  )
+
+  const newChat = useCallback(async () => {
+    const nextSessionId = wsRef.current.startNewSession()
+    const nextSession = createSessionState(nextSessionId)
+
+    clearVoiceFallback()
+    window.speechSynthesis?.cancel()
+    lastAssistantTextRef.current = ""
+    audioStreamRef.current = { chatId: null, chunks: [] }
+    setIsTyping(false)
     setError(null)
 
-    wsRef.current.send(content.trim())
-  }, [])
+    setSessionsState((prev) => {
+      const currentSession = prev.find(
+        (session) => session.id === activeSessionIdRef.current,
+      )
+      const hasCurrentMessages = Boolean(currentSession?.messages.length)
+      const preservedSessions = hasCurrentMessages
+        ? prev
+        : prev.filter((session) => session.id !== activeSessionIdRef.current)
 
-  const clearMessages = useCallback(() => {
-    setMessages([])
-  }, [])
+      return [nextSession, ...preservedSessions]
+    })
+    setActiveSessionId(nextSessionId)
+
+    await connectWithBootstrap()
+  }, [clearVoiceFallback, connectWithBootstrap])
+
+  const switchSession = useCallback(
+    async (sessionId: string) => {
+      if (!sessionId || sessionId === activeSessionIdRef.current) {
+        return
+      }
+
+      wsRef.current.useSession(sessionId)
+      clearVoiceFallback()
+      window.speechSynthesis?.cancel()
+      audioStreamRef.current = { chatId: null, chunks: [] }
+      lastAssistantTextRef.current = ""
+      setIsTyping(false)
+      setError(null)
+      setActiveSessionId(sessionId)
+
+      await connectWithBootstrap()
+    },
+    [clearVoiceFallback, connectWithBootstrap],
+  )
 
   const reconnect = useCallback(() => {
     setError(null)
     setIsTyping(false)
     wsRef.current.disconnect()
 
-    connectWithBootstrap().catch((err) => {
-      setError('重新连接失败')
-      console.error('Reconnection failed:', err)
+    void connectWithBootstrap().catch((err) => {
+      setError("重新连接失败")
+      console.error("Reconnection failed:", err)
     })
   }, [connectWithBootstrap])
 
@@ -159,13 +524,24 @@ export function useChat(options: UseChatOptions = {}) {
     setError(null)
   }, [])
 
+  const activeSession =
+    sessionsState.find((session) => session.id === activeSessionId) ??
+    createSessionState(activeSessionId)
+
+  const sessions = [...sessionsState]
+    .sort((left, right) => right.updatedAt - left.updatedAt)
+    .map((session) => buildSessionSummary(session))
+
   return {
-    messages,
+    messages: activeSession.messages,
+    sessions,
+    activeSessionId,
     isConnected,
     isTyping,
     error,
     sendMessage,
-    clearMessages,
+    newChat,
+    switchSession,
     reconnect,
     clearError,
   }

@@ -1,18 +1,39 @@
 "use client"
 
 import { useEffect, useRef, useState, type CSSProperties } from "react"
-import { 
-  Plus, MessageSquare, Layers, Clock, Tag, User, Settings, Moon, Sun, Home,
-  Cpu, AlertCircle, Sparkles, FolderUp
+import {
+  AlertCircle,
+  Clock,
+  Cpu,
+  FolderUp,
+  Home,
+  Layers,
+  MessageSquare,
+  Moon,
+  Plus,
+  Settings,
+  Sparkles,
+  Sun,
+  Tag,
+  User,
 } from "lucide-react"
+
 import { Button } from "@/components/ui/button"
-import { cn } from "@/lib/utils"
+import { type UseChatResult } from "@/hooks/use-chat"
 import { useGatewayStatus } from "@/hooks/use-picoclaw"
-import { openOnboardingPopup, SCHEDULE_ICS_NAME_STORAGE_KEY } from "@/lib/onboarding"
+import {
+  openOnboardingPopup,
+  SCHEDULE_ICS_NAME_STORAGE_KEY,
+} from "@/lib/onboarding"
+import { cn } from "@/lib/utils"
 
 interface SidebarProps {
   activeNav: string
   setActiveNav: (nav: string) => void
+  chat: Pick<
+    UseChatResult,
+    "sessions" | "activeSessionId" | "newChat" | "switchSession"
+  >
 }
 
 const navItems = [
@@ -22,7 +43,15 @@ const navItems = [
   { icon: Settings, label: "配置" },
 ]
 
-export function Sidebar({ activeNav, setActiveNav }: SidebarProps) {
+function formatRelativeTime(timestamp: number): string {
+  const diffMs = Date.now() - timestamp
+  if (diffMs < 60_000) return "刚刚"
+  if (diffMs < 3_600_000) return `${Math.max(1, Math.floor(diffMs / 60_000))}分钟前`
+  if (diffMs < 86_400_000) return `${Math.max(1, Math.floor(diffMs / 3_600_000))}小时前`
+  return `${Math.max(1, Math.floor(diffMs / 86_400_000))}天前`
+}
+
+export function Sidebar({ activeNav, setActiveNav, chat }: SidebarProps) {
   const [isDarkMode, setIsDarkMode] = useState(false)
   const [scheduleFileName, setScheduleFileName] = useState("")
   const [scheduleImportHint, setScheduleImportHint] = useState("")
@@ -35,34 +64,42 @@ export function Sidebar({ activeNav, setActiveNav }: SidebarProps) {
       if (savedName) {
         setScheduleFileName(savedName)
       }
-    } catch {
-    }
+    } catch {}
   }, [])
 
   const toggleTheme = () => {
-    setIsDarkMode(!isDarkMode)
+    setIsDarkMode((prev) => !prev)
     document.documentElement.classList.toggle("dark")
   }
 
   const getStatusColor = () => {
     if (!gatewayStatus) return "bg-gray-400"
     switch (gatewayStatus.state) {
-      case "running": return "bg-green-500"
+      case "running":
+        return "bg-green-500"
       case "starting":
-      case "restarting": return "bg-yellow-500 animate-pulse"
-      case "stopping": return "bg-orange-500"
-      default: return "bg-red-500"
+      case "restarting":
+        return "bg-yellow-500 animate-pulse"
+      case "stopping":
+        return "bg-orange-500"
+      default:
+        return "bg-red-500"
     }
   }
 
   const getStatusText = () => {
     if (!gatewayStatus) return "检查中..."
     switch (gatewayStatus.state) {
-      case "running": return "运行中"
-      case "starting": return "启动中"
-      case "restarting": return "重启中"
-      case "stopping": return "停止中"
-      default: return "已停止"
+      case "running":
+        return "运行中"
+      case "starting":
+        return "启动中"
+      case "restarting":
+        return "重启中"
+      case "stopping":
+        return "停止中"
+      default:
+        return "已停止"
     }
   }
 
@@ -77,13 +114,14 @@ export function Sidebar({ activeNav, setActiveNav }: SidebarProps) {
     setScheduleFileName(file.name)
     try {
       window.localStorage.setItem(SCHEDULE_ICS_NAME_STORAGE_KEY, file.name)
-    } catch {
-    }
+    } catch {}
   }
 
   return (
-    <aside className="w-60 border-r border-border/80 bg-sidebar flex flex-col h-full" style={{ WebkitAppRegion: "no-drag" } as CSSProperties}>
-      {/* Logo */}
+    <aside
+      className="w-60 border-r border-border/80 bg-sidebar flex flex-col h-full"
+      style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+    >
       <div className="p-4 flex items-center gap-2 border-b border-border/60">
         <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center shadow-sm">
           <svg
@@ -100,13 +138,14 @@ export function Sidebar({ activeNav, setActiveNav }: SidebarProps) {
             <circle cx="12" cy="12" r="3" fill="white" />
           </svg>
         </div>
-        <span className="font-semibold text-foreground tracking-tight">PetClaw AI</span>
+        <span className="font-semibold text-foreground tracking-tight">
+          PetClaw AI
+        </span>
         <span className="text-xs px-1.5 py-0.5 rounded border border-border text-muted-foreground">
           测试版
         </span>
       </div>
 
-      {/* Gateway Status */}
       <div className="px-3 my-3">
         <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-card border border-border/70">
           <Cpu className="w-4 h-4 text-muted-foreground" />
@@ -114,21 +153,27 @@ export function Sidebar({ activeNav, setActiveNav }: SidebarProps) {
             <p className="text-xs text-muted-foreground">网关状态</p>
             <div className="flex items-center gap-1.5">
               <span className={cn("w-1.5 h-1.5 rounded-full", getStatusColor())} />
-              <span className="text-sm text-foreground truncate">{getStatusText()}</span>
+              <span className="text-sm text-foreground truncate">
+                {getStatusText()}
+              </span>
             </div>
           </div>
           {gatewayStatus?.restartRequired && (
-            <AlertCircle className="w-4 h-4 text-orange-500" title="需要重启" />
+            <span title="需要重启">
+              <AlertCircle className="w-4 h-4 text-orange-500" />
+            </span>
           )}
         </div>
       </div>
 
-      {/* New Chat Button */}
       <div className="px-3 mb-2">
         <Button
           variant="outline"
           className="w-full justify-center gap-2 h-10 bg-background/90 hover:bg-accent border-border/80"
-          onClick={() => setActiveNav("聊天")}
+          onClick={() => {
+            setActiveNav("聊天")
+            void chat.newChat()
+          }}
         >
           <Plus className="w-4 h-4" />
           <span>新建聊天</span>
@@ -160,16 +205,21 @@ export function Sidebar({ activeNav, setActiveNav }: SidebarProps) {
           type="file"
           accept=".ics"
           className="hidden"
-          onChange={(event) => handleScheduleFilePick(event.target.files?.[0] ?? null)}
+          onChange={(event) =>
+            handleScheduleFilePick(event.target.files?.[0] ?? null)
+          }
         />
         {scheduleImportHint ? (
-          <p className="mt-1 px-1 text-xs text-muted-foreground">{scheduleImportHint}</p>
+          <p className="mt-1 px-1 text-xs text-muted-foreground">
+            {scheduleImportHint}
+          </p>
         ) : scheduleFileName ? (
-          <p className="mt-1 px-1 text-xs text-muted-foreground">已导入：{scheduleFileName}</p>
+          <p className="mt-1 px-1 text-xs text-muted-foreground">
+            已导入：{scheduleFileName}
+          </p>
         ) : null}
       </div>
 
-      {/* Navigation */}
       <nav className="flex-1 px-3 overflow-auto py-1">
         <ul className="space-y-1">
           {navItems.map((item) => {
@@ -180,12 +230,12 @@ export function Sidebar({ activeNav, setActiveNav }: SidebarProps) {
                 <button
                   onClick={() => setActiveNav(item.label)}
                   className={cn(
-                     "w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm transition-colors",
-                     isActive
+                    "w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm transition-colors",
+                    isActive
                       ? "bg-amber-100 text-amber-900"
-                      : "text-muted-foreground hover:bg-accent hover:text-foreground"
-                   )}
-                 >
+                      : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                  )}
+                >
                   <Icon className="w-4 h-4" />
                   <span>{item.label}</span>
                 </button>
@@ -194,23 +244,44 @@ export function Sidebar({ activeNav, setActiveNav }: SidebarProps) {
           })}
         </ul>
 
-        {/* Chat History Section */}
         <div className="mt-6">
           <p className="text-xs text-muted-foreground px-3 mb-2">对话记录</p>
-          <button 
-            onClick={() => setActiveNav("聊天")}
-            className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
-          >
-            <Home className="w-4 h-4" />
-            <div className="flex flex-col items-start">
-              <span className="text-foreground">你好</span>
-              <span className="text-xs text-muted-foreground">1天前</span>
-            </div>
-          </button>
+          <div className="space-y-1">
+            {chat.sessions.length === 0 ? (
+              <div className="px-3 py-2 text-xs text-muted-foreground">
+                暂无历史对话
+              </div>
+            ) : (
+              chat.sessions.map((session) => (
+                <button
+                  key={session.id}
+                  onClick={() => {
+                    setActiveNav("聊天")
+                    void chat.switchSession(session.id)
+                  }}
+                  className={cn(
+                    "w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm text-left transition-colors",
+                    session.id === chat.activeSessionId
+                      ? "bg-amber-100 text-amber-900"
+                      : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                  )}
+                >
+                  <Home className="w-4 h-4 shrink-0" />
+                  <div className="min-w-0 flex-1 flex flex-col items-start">
+                    <span className="w-full truncate text-foreground">
+                      {session.title}
+                    </span>
+                    <span className="w-full truncate text-xs text-muted-foreground">
+                      {session.preview || formatRelativeTime(session.updatedAt)}
+                    </span>
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
         </div>
       </nav>
 
-      {/* Bottom Actions */}
       <div className="p-3 border-t border-border/70 bg-card">
         <button className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-muted-foreground hover:bg-accent hover:text-foreground mb-2">
           <Tag className="w-4 h-4" />
@@ -220,13 +291,13 @@ export function Sidebar({ activeNav, setActiveNav }: SidebarProps) {
           <button className="p-2 rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground">
             <User className="w-4 h-4" />
           </button>
-          <button 
+          <button
             onClick={() => setActiveNav("配置")}
             className="p-2 rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
           >
             <Settings className="w-4 h-4" />
           </button>
-          <button 
+          <button
             onClick={toggleTheme}
             className="p-2 rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
           >

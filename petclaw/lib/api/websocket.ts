@@ -3,21 +3,22 @@ import {
   DIRECT_PET_TOKEN_PATH,
   DIRECT_PET_WS_PATH,
   getApiBaseUrl,
-  getDirectGatewayBaseUrl,
   getAuthRequestCredentials,
+  getDirectGatewayBaseUrl,
   getWsBaseUrl,
   withLauncherAuthHeader,
-} from './config'
+} from "./config"
 
-const CHAT_ACTION = 'chat'
+const CHAT_ACTION = "chat"
 
-const PUSH_TYPE_AI_CHAT = 'ai_chat'
-const PUSH_TYPE_EMOTION_CHANGE = 'emotion_change'
-const PUSH_TYPE_ACTION_TRIGGER = 'action_trigger'
+const PUSH_TYPE_AI_CHAT = "ai_chat"
+const PUSH_TYPE_AUDIO = "audio"
+const PUSH_TYPE_EMOTION_CHANGE = "emotion_change"
+const PUSH_TYPE_ACTION_TRIGGER = "action_trigger"
 
 export interface ChatMessage {
   id: string
-  role: 'user' | 'assistant' | 'system'
+  role: "user" | "assistant" | "system"
   content: string
   timestamp: number
   streaming?: boolean
@@ -58,41 +59,43 @@ interface TokenCandidate {
   useLauncherAuth: boolean
 }
 
-type WSMode = 'pet'
+type WSEventData = ChatMessage | string | Record<string, unknown>
+type WSMode = "pet"
 type OutboundRequest = PetRequest
 
 export type WSEventType =
-  | 'connected'
-  | 'disconnected'
-  | 'message'
-  | 'typing'
-  | 'error'
-  | 'reconnecting'
-  | 'emotion_change'
-  | 'action_trigger'
+  | "connected"
+  | "disconnected"
+  | "message"
+  | "audio"
+  | "typing"
+  | "error"
+  | "reconnecting"
+  | "emotion_change"
+  | "action_trigger"
 
 export interface WSEvent {
   type: WSEventType
-  data?: ChatMessage | string
+  data?: WSEventData
 }
 
 type WSEventHandler = (event: WSEvent) => void
 
 export class PicoClawWebSocket {
   private ws: WebSocket | null = null
-  private sessionId = ''
+  private sessionId = ""
   private reconnectAttempts = 0
   private readonly maxReconnectAttempts = 5
   private readonly reconnectDelay = 1000
   private handlers: Set<WSEventHandler> = new Set()
-  private wsMode: WSMode = 'pet'
+  private wsMode: WSMode = "pet"
   private messageQueue: OutboundRequest[] = []
   private isConnecting = false
   private msgIdCounter = 0
-  private lastConnectUrl = ''
+  private lastConnectUrl = ""
   private manualClose = false
   private activeAssistantMessageId: string | null = null
-  private activeAssistantContent = ''
+  private activeAssistantContent = ""
   private activeAssistantTimestamp = 0
   private openHandlers: {
     settle: () => void
@@ -116,7 +119,7 @@ export class PicoClawWebSocket {
           }
           if (!this.isConnecting || Date.now() - startedAt > 10000) {
             window.clearInterval(timer)
-            reject(new Error('Connection in progress timed out'))
+            reject(new Error("Connection in progress timed out"))
           }
         }, 100)
         return
@@ -131,19 +134,56 @@ export class PicoClawWebSocket {
         if (!this.sessionId) {
           this.sessionId = this.generateSessionId()
         }
-        const { token, wsPath, wsBaseUrl, mode } = await this.resolveTokenAndPath()
+        const { token, wsPath, wsBaseUrl, mode } =
+          await this.resolveTokenAndPath()
         this.wsMode = mode
         const query = `session=${encodeURIComponent(this.sessionId)}&session_id=${encodeURIComponent(this.sessionId)}`
         const url = `${wsBaseUrl}${wsPath}?${query}`
-        this.connectWebSocket(url, token, mode)
+        this.connectWebSocket(url, token)
       } catch (err) {
         this.openHandlers = null
-        reject(err instanceof Error ? err : new Error('WebSocket bootstrap failed'))
+        reject(
+          err instanceof Error ? err : new Error("WebSocket bootstrap failed"),
+        )
       }
     })
   }
 
-  private async resolveTokenAndPath(): Promise<{ token: string; wsPath: string; wsBaseUrl: string; mode: WSMode }> {
+  ensureSessionId(): string {
+    if (!this.sessionId) {
+      this.sessionId = this.generateSessionId()
+    }
+    return this.sessionId
+  }
+
+  startNewSession(): string {
+    this.disconnect()
+    this.sessionId = this.generateSessionId()
+    this.messageQueue = []
+    this.resetAssistantState()
+    return this.sessionId
+  }
+
+  useSession(sessionId: string): string {
+    this.disconnect()
+    this.sessionId = sessionId || this.generateSessionId()
+    this.messageQueue = []
+    this.resetAssistantState()
+    return this.sessionId
+  }
+
+  private resetAssistantState(): void {
+    this.activeAssistantMessageId = null
+    this.activeAssistantContent = ""
+    this.activeAssistantTimestamp = 0
+  }
+
+  private async resolveTokenAndPath(): Promise<{
+    token: string
+    wsPath: string
+    wsBaseUrl: string
+    mode: WSMode
+  }> {
     const candidates: TokenCandidate[] = [
       {
         baseUrl: getDirectGatewayBaseUrl(),
@@ -159,14 +199,18 @@ export class PicoClawWebSocket {
       },
     ]
 
-    let lastError = 'PET channel not available'
+    let lastError = "PET channel not available"
 
     for (const candidate of candidates) {
       const input = `${candidate.baseUrl}${candidate.tokenPath}`
       const res = await fetch(input, {
-        method: 'GET',
-        headers: candidate.useLauncherAuth ? withLauncherAuthHeader() : undefined,
-        credentials: candidate.useLauncherAuth ? getAuthRequestCredentials(input) : 'omit',
+        method: "GET",
+        headers: candidate.useLauncherAuth
+          ? withLauncherAuthHeader()
+          : undefined,
+        credentials: candidate.useLauncherAuth
+          ? getAuthRequestCredentials(input)
+          : "omit",
       }).catch(() => null)
 
       if (!res) {
@@ -175,7 +219,7 @@ export class PicoClawWebSocket {
       }
 
       if (res.status === 404) {
-        lastError = 'PET channel not available'
+        lastError = "PET channel not available"
         continue
       }
 
@@ -193,10 +237,10 @@ export class PicoClawWebSocket {
       const wsPathFromToken = this.normalizeWsPath(data.ws_url)
       const wsBaseUrl = this.normalizeWsBaseUrl(data.ws_url, candidate.baseUrl)
       return {
-        token: data.token || '',
+        token: data.token || "",
         wsPath: wsPathFromToken || candidate.wsPath,
         wsBaseUrl,
-        mode: 'pet',
+        mode: "pet",
       }
     }
 
@@ -205,24 +249,32 @@ export class PicoClawWebSocket {
 
   private normalizeWsPath(raw?: string): string {
     if (!raw || !raw.trim()) {
-      return ''
+      return ""
     }
 
     const value = raw.trim()
 
     try {
-      if (value.startsWith('ws://') || value.startsWith('wss://') || value.startsWith('http://') || value.startsWith('https://')) {
+      if (
+        value.startsWith("ws://") ||
+        value.startsWith("wss://") ||
+        value.startsWith("http://") ||
+        value.startsWith("https://")
+      ) {
         const parsed = new URL(value)
-        return parsed.pathname || ''
+        return parsed.pathname || ""
       }
     } catch {
-      return ''
+      return ""
     }
 
-    return value.startsWith('/') ? value : `/${value}`
+    return value.startsWith("/") ? value : `/${value}`
   }
 
-  private normalizeWsBaseUrl(raw: string | undefined, fallbackBaseUrl: string): string {
+  private normalizeWsBaseUrl(
+    raw: string | undefined,
+    fallbackBaseUrl: string,
+  ): string {
     if (raw && raw.trim()) {
       try {
         const parsed = new URL(raw)
@@ -236,10 +288,12 @@ export class PicoClawWebSocket {
       return getWsBaseUrl()
     }
 
-    return fallbackBaseUrl.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:')
+    return fallbackBaseUrl
+      .replace(/^http:/, "ws:")
+      .replace(/^https:/, "wss:")
   }
 
-  private connectWebSocket(url: string, token: string, mode: WSMode): void {
+  private connectWebSocket(url: string, token: string): void {
     this.isConnecting = true
     this.lastConnectUrl = url
     this.manualClose = false
@@ -251,11 +305,13 @@ export class PicoClawWebSocket {
       this.ws.onopen = () => {
         this.isConnecting = false
         this.reconnectAttempts = 0
-        this.emit({ type: 'connected' })
+        this.emit({ type: "connected" })
 
         while (this.messageQueue.length > 0) {
           const msg = this.messageQueue.shift()
-          if (msg) this.sendRaw(msg)
+          if (msg) {
+            this.sendRaw(msg)
+          }
         }
 
         this.openHandlers?.settle()
@@ -266,27 +322,28 @@ export class PicoClawWebSocket {
         try {
           const data = JSON.parse(event.data)
 
-          if (data.type === 'push') {
-            this.handlePush(data)
-          } else {
-            this.handleResponse(data)
+          if (data.type === "push") {
+            this.handlePush(data as PetPush)
+            return
           }
+
+          this.handleResponse(data as PetResponse)
         } catch {
-          this.emit({ type: 'error', data: 'Invalid message format' })
+          this.emit({ type: "error", data: "Invalid message format" })
         }
       }
 
       this.ws.onerror = () => {
         this.isConnecting = false
         const msg = `WebSocket error (${this.lastConnectUrl})`
-        this.emit({ type: 'error', data: msg })
+        this.emit({ type: "error", data: msg })
         this.openHandlers?.fail(new Error(msg))
         this.openHandlers = null
       }
 
       this.ws.onclose = (event) => {
         this.isConnecting = false
-        this.emit({ type: 'disconnected' })
+        this.emit({ type: "disconnected" })
 
         if (this.manualClose) {
           this.manualClose = false
@@ -294,14 +351,20 @@ export class PicoClawWebSocket {
         }
 
         if (event.code !== 1000) {
-          this.emit({ type: 'error', data: `WebSocket closed: code=${event.code} reason=${event.reason || 'none'}` })
+          this.emit({
+            type: "error",
+            data: `WebSocket closed: code=${event.code} reason=${event.reason || "none"}`,
+          })
         }
 
         this.attemptReconnect()
       }
     } catch (error) {
       this.isConnecting = false
-      const err = error instanceof Error ? error : new Error('WebSocket connection failed')
+      const err =
+        error instanceof Error
+          ? error
+          : new Error("WebSocket connection failed")
       this.openHandlers?.fail(err)
       this.openHandlers = null
     }
@@ -314,52 +377,61 @@ export class PicoClawWebSocket {
       case PUSH_TYPE_AI_CHAT:
         this.handleAIChatPush(data)
         break
+      case PUSH_TYPE_AUDIO:
+        this.handleAudioPush(data)
+        break
       case PUSH_TYPE_EMOTION_CHANGE:
         this.handleEmotionChangePush(data)
         break
       case PUSH_TYPE_ACTION_TRIGGER:
         this.handleActionTriggerPush(data)
         break
+      default:
+        break
     }
   }
 
   private handleAIChatPush(data: Record<string, unknown>): void {
-    const contentType = (data.type as string) || 'text'
-    const text = (data.text as string) || ''
+    const contentType = (data.type as string) || "text"
+    const text = (data.text as string) || ""
     const timestamp = Date.now()
 
-    if (contentType === 'tool') {
-      const chatMsg: ChatMessage = {
-        id: `tool-${timestamp}-${Math.random().toString(36).slice(2, 8)}`,
-        role: 'assistant',
-        content: text,
-        timestamp,
-        streaming: false,
-      }
-      this.emit({ type: 'message', data: chatMsg })
+    if (contentType === "tool") {
+      this.emit({
+        type: "message",
+        data: {
+          id: `tool-${timestamp}-${Math.random().toString(36).slice(2, 8)}`,
+          role: "assistant",
+          content: text,
+          timestamp,
+          streaming: false,
+        } satisfies ChatMessage,
+      })
       return
     }
 
-    if (contentType === 'text' || contentType === '') {
+    if (contentType === "text" || contentType === "") {
       if (!this.activeAssistantMessageId) {
         this.activeAssistantMessageId = `assistant-${timestamp}`
-        this.activeAssistantContent = ''
+        this.activeAssistantContent = ""
         this.activeAssistantTimestamp = timestamp
       }
 
       this.activeAssistantContent += text
-      const chatMsg: ChatMessage = {
-        id: this.activeAssistantMessageId,
-        role: 'assistant',
-        content: this.activeAssistantContent,
-        timestamp: this.activeAssistantTimestamp || timestamp,
-        streaming: true,
-      }
-      this.emit({ type: 'message', data: chatMsg })
+      this.emit({
+        type: "message",
+        data: {
+          id: this.activeAssistantMessageId,
+          role: "assistant",
+          content: this.activeAssistantContent,
+          timestamp: this.activeAssistantTimestamp || timestamp,
+          streaming: true,
+        } satisfies ChatMessage,
+      })
       return
     }
 
-    if (contentType === 'final') {
+    if (contentType === "final") {
       if (text) {
         if (!this.activeAssistantMessageId) {
           this.activeAssistantMessageId = `assistant-${timestamp}`
@@ -374,33 +446,40 @@ export class PicoClawWebSocket {
         this.activeAssistantTimestamp = timestamp
       }
 
-      const chatMsg: ChatMessage = {
-        id: this.activeAssistantMessageId,
-        role: 'assistant',
-        content: finalContent,
-        timestamp: this.activeAssistantTimestamp || timestamp,
-        streaming: false,
-      }
-      this.emit({ type: 'message', data: chatMsg })
-      this.emit({ type: 'typing', data: 'false' })
-      this.activeAssistantMessageId = null
-      this.activeAssistantContent = ''
-      this.activeAssistantTimestamp = 0
+      this.emit({
+        type: "message",
+        data: {
+          id: this.activeAssistantMessageId,
+          role: "assistant",
+          content: finalContent,
+          timestamp: this.activeAssistantTimestamp || timestamp,
+          streaming: false,
+        } satisfies ChatMessage,
+      })
+      this.emit({ type: "typing", data: "false" })
+      this.resetAssistantState()
     }
   }
 
+  private handleAudioPush(data: Record<string, unknown>): void {
+    this.emit({ type: "audio", data })
+  }
+
   private handleEmotionChangePush(data: Record<string, unknown>): void {
-    const emotion = (data.emotion as string) || ''
-    this.emit({ type: 'emotion_change', data: emotion })
+    this.emit({
+      type: "emotion_change",
+      data: (data.emotion as string) || "",
+    })
   }
 
   private handleActionTriggerPush(data: Record<string, unknown>): void {
-    const action = (data.action as string) || ''
-    this.emit({ type: 'action_trigger', data: action })
+    this.emit({
+      type: "action_trigger",
+      data: (data.action as string) || "",
+    })
   }
 
-  private handleResponse(_resp: PetResponse): void {
-  }
+  private handleResponse(_resp: PetResponse): void {}
 
   disconnect(): void {
     if (this.ws) {
@@ -416,12 +495,10 @@ export class PicoClawWebSocket {
   }
 
   send(content: string): void {
-    this.activeAssistantMessageId = null
-    this.activeAssistantContent = ''
-    this.activeAssistantTimestamp = 0
+    this.resetAssistantState()
     this.sendAction(CHAT_ACTION, {
       text: content,
-      session_key: this.sessionId,
+      session_key: this.ensureSessionId(),
     })
   }
 
@@ -440,7 +517,7 @@ export class PicoClawWebSocket {
 
     this.messageQueue.push(msg)
     this.connect().catch(() => {
-      this.emit({ type: 'error', data: 'Connection failed' })
+      this.emit({ type: "error", data: "Connection failed" })
     })
   }
 
@@ -465,12 +542,15 @@ export class PicoClawWebSocket {
 
   private attemptReconnect(): void {
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      this.emit({ type: 'error', data: `Max reconnection attempts reached (${this.lastConnectUrl || 'unknown url'})` })
+      this.emit({
+        type: "error",
+        data: `Max reconnection attempts reached (${this.lastConnectUrl || "unknown url"})`,
+      })
       return
     }
 
-    this.reconnectAttempts++
-    this.emit({ type: 'reconnecting' })
+    this.reconnectAttempts += 1
+    this.emit({ type: "reconnecting" })
 
     window.setTimeout(() => {
       this.connect().catch(() => {})

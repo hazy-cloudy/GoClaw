@@ -1,11 +1,26 @@
-"use client"
+﻿"use client"
 
 import { useState } from "react"
-import { Settings, Save, RotateCcw, Code, Eye, AlertTriangle, Check, Cpu, Globe, Clock, Shield } from "lucide-react"
+import {
+  AlertTriangle,
+  Code,
+  Cpu,
+  Eye,
+  RotateCcw,
+  Save,
+  Settings,
+  Shield,
+} from "lucide-react"
+
 import { Button } from "@/components/ui/button"
-import { cn } from "@/lib/utils"
-import { useConfig, useUpdateConfig, useGatewayStatus, useGatewayControl } from "@/hooks/use-picoclaw"
 import { Spinner } from "@/components/ui/spinner"
+import {
+  useConfig,
+  useGatewayControl,
+  useGatewayStatus,
+  useUpdateConfig,
+} from "@/hooks/use-picoclaw"
+import { cn } from "@/lib/utils"
 
 export function ConfigPage() {
   const [activeTab, setActiveTab] = useState<"visual" | "raw">("visual")
@@ -17,7 +32,6 @@ export function ConfigPage() {
   const { data: gatewayStatus } = useGatewayStatus()
   const { restart } = useGatewayControl()
 
-  // 配置状态
   const [formData, setFormData] = useState({
     defaultModel: "",
     systemPrompt: "",
@@ -27,13 +41,14 @@ export function ConfigPage() {
     port: 18800,
   })
 
-  // 更新表单数据
-  const handleInputChange = (field: string, value: string | boolean | number) => {
-    setFormData(prev => ({ ...prev, [field]: value }))
+  const handleInputChange = (
+    field: string,
+    value: string | boolean | number,
+  ) => {
+    setFormData((prev) => ({ ...prev, [field]: value }))
     setHasChanges(true)
   }
 
-  // 保存配置
   const handleSave = async () => {
     try {
       await updateConfig.trigger({
@@ -59,7 +74,6 @@ export function ConfigPage() {
     }
   }
 
-  // 重启网关
   const handleRestart = async () => {
     try {
       await restart.trigger()
@@ -70,7 +84,6 @@ export function ConfigPage() {
 
   return (
     <div className="flex-1 flex flex-col bg-gradient-to-b from-background to-amber-50/20">
-      {/* Header */}
       <header className="flex items-center justify-between px-6 py-4 border-b border-border/70 bg-white/70 backdrop-blur-sm">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center text-white shadow-sm">
@@ -104,13 +117,16 @@ export function ConfigPage() {
             disabled={!hasChanges || updateConfig.isMutating}
             className="bg-amber-700 hover:bg-amber-800 text-amber-50 border-0"
           >
-            {updateConfig.isMutating ? <Spinner className="w-4 h-4 mr-2" /> : <Save className="w-4 h-4 mr-2" />}
+            {updateConfig.isMutating ? (
+              <Spinner className="w-4 h-4 mr-2" />
+            ) : (
+              <Save className="w-4 h-4 mr-2" />
+            )}
             保存配置
           </Button>
         </div>
       </header>
 
-      {/* Tabs */}
       <div className="px-6 py-3 border-b border-border/70 bg-white/50">
         <div className="flex items-center gap-2">
           <button
@@ -119,7 +135,7 @@ export function ConfigPage() {
               "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors",
               activeTab === "visual"
                 ? "bg-amber-900 text-amber-50"
-                : "text-muted-foreground hover:bg-accent"
+                : "text-muted-foreground hover:bg-accent",
             )}
           >
             <Eye className="w-4 h-4" />
@@ -131,7 +147,7 @@ export function ConfigPage() {
               "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors",
               activeTab === "raw"
                 ? "bg-amber-900 text-amber-50"
-                : "text-muted-foreground hover:bg-accent"
+                : "text-muted-foreground hover:bg-accent",
             )}
           >
             <Code className="w-4 h-4" />
@@ -140,7 +156,6 @@ export function ConfigPage() {
         </div>
       </div>
 
-      {/* Content */}
       <div className="flex-1 overflow-auto p-6">
         {isLoading ? (
           <div className="flex items-center justify-center h-40">
@@ -148,7 +163,6 @@ export function ConfigPage() {
           </div>
         ) : activeTab === "visual" ? (
           <div className="max-w-2xl space-y-6">
-            {/* Gateway Status Card */}
             <div className="p-4 rounded-2xl border border-border/80 bg-white shadow-sm">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -159,7 +173,8 @@ export function ConfigPage() {
                     <h3 className="font-medium text-foreground">网关状态</h3>
                     <p className="text-sm text-muted-foreground">
                       {gatewayStatus?.running ? "网关正在运行" : "网关已停止"}
-                      {gatewayStatus?.uptime && ` - 运行时间: ${Math.floor(gatewayStatus.uptime / 60)} 分钟`}
+                      {gatewayStatus?.uptime &&
+                        ` - 运行时间: ${Math.floor(Number(gatewayStatus.uptime) / 60)} 分钟`}
                     </p>
                   </div>
                 </div>
@@ -168,28 +183,31 @@ export function ConfigPage() {
                   onClick={handleRestart}
                   disabled={restart.isMutating}
                   className={cn(
-                    gatewayStatus?.restartRequired && "border-orange-500 text-orange-500"
+                    gatewayStatus?.restartRequired &&
+                      "border-orange-500 text-orange-500",
                   )}
                 >
-                  {restart.isMutating ? <Spinner className="w-4 h-4 mr-2" /> : <RotateCcw className="w-4 h-4 mr-2" />}
+                  {restart.isMutating ? (
+                    <Spinner className="w-4 h-4 mr-2" />
+                  ) : (
+                    <RotateCcw className="w-4 h-4 mr-2" />
+                  )}
                   {gatewayStatus?.restartRequired ? "需要重启" : "重启网关"}
                 </Button>
               </div>
             </div>
 
-            {/* Agent Settings */}
             <div className="p-4 rounded-2xl border border-border/80 bg-white shadow-sm">
-              <h3 className="font-medium text-foreground mb-4 flex items-center gap-2">
-                <span className="w-6 h-6 rounded-lg bg-blue-100 flex items-center justify-center text-blue-600 text-sm">🤖</span>
-                智能体设置
-              </h3>
+              <h3 className="font-medium text-foreground mb-4">智能体设置</h3>
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium mb-1.5">默认模型</label>
                   <input
                     type="text"
                     value={formData.defaultModel}
-                    onChange={(e) => handleInputChange("defaultModel", e.target.value)}
+                    onChange={(e) =>
+                      handleInputChange("defaultModel", e.target.value)
+                    }
                     placeholder="例如：gpt-4, claude-3-opus"
                     className="w-full px-3 py-2 border border-border rounded-xl bg-background text-foreground placeholder:text-muted-foreground outline-none focus:ring-2 focus:ring-blue-400/30"
                   />
@@ -198,7 +216,9 @@ export function ConfigPage() {
                   <label className="block text-sm font-medium mb-1.5">系统提示词</label>
                   <textarea
                     value={formData.systemPrompt}
-                    onChange={(e) => handleInputChange("systemPrompt", e.target.value)}
+                    onChange={(e) =>
+                      handleInputChange("systemPrompt", e.target.value)
+                    }
                     placeholder="设置 AI 的角色和行为..."
                     className="w-full px-3 py-2 border border-border rounded-xl bg-background text-foreground placeholder:text-muted-foreground outline-none focus:ring-2 focus:ring-blue-400/30 resize-none h-24"
                   />
@@ -206,12 +226,8 @@ export function ConfigPage() {
               </div>
             </div>
 
-            {/* Runtime Settings */}
             <div className="p-4 rounded-2xl border border-border/80 bg-white shadow-sm">
-              <h3 className="font-medium text-foreground mb-4 flex items-center gap-2">
-                <span className="w-6 h-6 rounded-lg bg-orange-100 flex items-center justify-center text-orange-600 text-sm">⚡</span>
-                运行时设置
-              </h3>
+              <h3 className="font-medium text-foreground mb-4">运行时设置</h3>
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
@@ -219,16 +235,18 @@ export function ConfigPage() {
                     <p className="text-sm text-muted-foreground">允许 AI 执行系统命令</p>
                   </div>
                   <button
-                    onClick={() => handleInputChange("execEnabled", !formData.execEnabled)}
+                    onClick={() =>
+                      handleInputChange("execEnabled", !formData.execEnabled)
+                    }
                     className={cn(
                       "relative w-12 h-6 rounded-full transition-colors",
-                      formData.execEnabled ? "bg-green-500" : "bg-muted"
+                      formData.execEnabled ? "bg-green-500" : "bg-muted",
                     )}
                   >
                     <span
                       className={cn(
                         "absolute top-1 w-4 h-4 rounded-full bg-white transition-transform",
-                        formData.execEnabled ? "translate-x-7" : "translate-x-1"
+                        formData.execEnabled ? "translate-x-7" : "translate-x-1",
                       )}
                     />
                   </button>
@@ -239,16 +257,18 @@ export function ConfigPage() {
                     <p className="text-sm text-muted-foreground">启用定时任务功能</p>
                   </div>
                   <button
-                    onClick={() => handleInputChange("cronEnabled", !formData.cronEnabled)}
+                    onClick={() =>
+                      handleInputChange("cronEnabled", !formData.cronEnabled)
+                    }
                     className={cn(
                       "relative w-12 h-6 rounded-full transition-colors",
-                      formData.cronEnabled ? "bg-green-500" : "bg-muted"
+                      formData.cronEnabled ? "bg-green-500" : "bg-muted",
                     )}
                   >
                     <span
                       className={cn(
                         "absolute top-1 w-4 h-4 rounded-full bg-white transition-transform",
-                        formData.cronEnabled ? "translate-x-7" : "translate-x-1"
+                        formData.cronEnabled ? "translate-x-7" : "translate-x-1",
                       )}
                     />
                   </button>
@@ -256,19 +276,20 @@ export function ConfigPage() {
               </div>
             </div>
 
-            {/* Launcher Settings */}
             <div className="p-4 rounded-2xl border border-border/80 bg-white shadow-sm">
-              <h3 className="font-medium text-foreground mb-4 flex items-center gap-2">
-                <span className="w-6 h-6 rounded-lg bg-purple-100 flex items-center justify-center text-purple-600 text-sm">🚀</span>
-                启动器设置
-              </h3>
+              <h3 className="font-medium text-foreground mb-4">启动器设置</h3>
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium mb-1.5">端口号</label>
                   <input
                     type="number"
                     value={formData.port}
-                    onChange={(e) => handleInputChange("port", parseInt(e.target.value) || 18800)}
+                    onChange={(e) =>
+                      handleInputChange(
+                        "port",
+                        parseInt(e.target.value, 10) || 18800,
+                      )
+                    }
                     className="w-full px-3 py-2 border border-border rounded-xl bg-background text-foreground outline-none focus:ring-2 focus:ring-purple-400/30"
                   />
                 </div>
@@ -278,16 +299,20 @@ export function ConfigPage() {
                     <p className="text-sm text-muted-foreground">允许局域网中其他设备访问</p>
                   </div>
                   <button
-                    onClick={() => handleInputChange("publicAccess", !formData.publicAccess)}
+                    onClick={() =>
+                      handleInputChange("publicAccess", !formData.publicAccess)
+                    }
                     className={cn(
                       "relative w-12 h-6 rounded-full transition-colors",
-                      formData.publicAccess ? "bg-green-500" : "bg-muted"
+                      formData.publicAccess ? "bg-green-500" : "bg-muted",
                     )}
                   >
                     <span
                       className={cn(
                         "absolute top-1 w-4 h-4 rounded-full bg-white transition-transform",
-                        formData.publicAccess ? "translate-x-7" : "translate-x-1"
+                        formData.publicAccess
+                          ? "translate-x-7"
+                          : "translate-x-1",
                       )}
                     />
                   </button>
@@ -295,7 +320,6 @@ export function ConfigPage() {
               </div>
             </div>
 
-            {/* Warning */}
             <div className="p-4 rounded-2xl border border-orange-200 bg-orange-50">
               <div className="flex items-start gap-3">
                 <Shield className="w-5 h-5 text-orange-500 shrink-0 mt-0.5" />
