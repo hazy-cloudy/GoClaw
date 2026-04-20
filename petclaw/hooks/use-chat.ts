@@ -334,6 +334,11 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     activeSessionIdRef.current = activeSessionId
   }, [activeSessionId])
 
+  // 监听 activeSessionId 或 sessionsState 变化并保存到 localStorage
+  useEffect(() => {
+    saveSessionsToStorage(sessionsState, activeSessionId)
+  }, [activeSessionId, sessionsState])
+
   // 页面卸载或组件卸载时保存会话
   useEffect(() => {
     const handleBeforeUnload = () => {
