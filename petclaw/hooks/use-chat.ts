@@ -341,8 +341,17 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
 
   // 从后端加载会话历史
   const loadedFromBackendRef = useRef(false)
+  const shouldLoadFromBackendRef = useRef(true)  // 控制是否应该从后端加载
   const loadConversationsFromBackend = useCallback(async () => {
-    console.log("[petclaw] 开始从后端加载会话历史, loadedFromBackendRef:", loadedFromBackendRef.current)
+    console.log("[petclaw] 开始从后端加载会话历史, loadedFromBackendRef:", loadedFromBackendRef.current, "shouldLoadFromBackendRef:", shouldLoadFromBackendRef.current)
+    
+    // 如果标记为不加载（例如新建聊天），则跳过
+    if (!shouldLoadFromBackendRef.current) {
+      console.log("[petclaw] shouldLoadFromBackendRef=false，跳过加载后端历史")
+      shouldLoadFromBackendRef.current = true  // 重置标记
+      return
+    }
+    
     // 防止重复加载
     if (loadedFromBackendRef.current) {
       console.log("[petclaw] 已从后端加载过会话，跳过")
@@ -641,6 +650,10 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     })
     setActiveSessionId(nextSessionId)
 
+    // 新建聊天时不加载后端历史
+    shouldLoadFromBackendRef.current = false
+    loadedFromBackendRef.current = true
+    
     await connectWithBootstrap()
   }, [connectWithBootstrap])
 
@@ -662,7 +675,11 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       // 保存当前会话状态
       saveSessionsToStorage(sessionsState, sessionId)
       setActiveSessionId(sessionId)
-
+  
+      // 切换会话时重置标记，允许加载该会话的历史
+      shouldLoadFromBackendRef.current = true
+      loadedFromBackendRef.current = false
+  
       await connectWithBootstrap()
     },
     [connectWithBootstrap, sessionsState],
