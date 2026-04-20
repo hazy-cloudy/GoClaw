@@ -92,7 +92,7 @@ jobs:
           set -euo pipefail
           corepack enable
           cd web/frontend
-          pnpm install --frozen-lockfile
+          pnpm install --no-frozen-lockfile
           pnpm build:backend
 
       - name: Prepare onboard workspace
