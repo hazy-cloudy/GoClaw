@@ -12,7 +12,7 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $petclawDir = Join-Path $repoRoot "petclaw"
 $electronDir = Join-Path $repoRoot "electron-frontend"
-$mainBinary = Join-Path $repoRoot "picoclaw.exe"
+$mainBinary = ""
 
 if ([string]::IsNullOrWhiteSpace($LauncherConfigPath)) {
   $LauncherConfigPath = Join-Path $repoRoot ".goclaw-runtime\config.json"
@@ -45,6 +45,44 @@ function Find-LauncherBinary {
   }
 
   return ""
+}
+
+function Test-MainBinarySupportsGateway {
+  param([string]$BinaryPath)
+
+  if (-not (Test-Path $BinaryPath)) {
+    return $false
+  }
+
+  try {
+    $helpText = (& $BinaryPath "--help" 2>&1 | Out-String)
+    if ([string]::IsNullOrWhiteSpace($helpText)) {
+      return $false
+    }
+    return $helpText -match "(?im)\bgateway\b"
+  } catch {
+    return $false
+  }
+}
+
+function Find-MainBinary {
+  param([string]$baseDir)
+
+  $candidates = @(
+    (Join-Path $baseDir "build\picoclaw.exe"),
+    (Join-Path $baseDir "picoclaw.exe")
+  )
+
+  foreach ($candidate in $candidates) {
+    if (-not (Test-Path $candidate)) {
+      continue
+    }
+    if (Test-MainBinarySupportsGateway -BinaryPath $candidate) {
+      return $candidate
+    }
+  }
+
+  throw "Main picoclaw binary with 'gateway' command not found. Tried: $($candidates -join ', ')"
 }
 
 function Test-HttpReady {
@@ -508,6 +546,8 @@ if (-not (Test-Path $electronDir)) {
   throw "electron-frontend directory not found: $electronDir"
 }
 
+$mainBinary = Find-MainBinary -baseDir $repoRoot
+
 Repair-LauncherConfigIfInvalid -ConfigPath $LauncherConfigPath
 Ensure-LauncherConfigVersionCompat -ConfigPath $LauncherConfigPath
 Ensure-PicoAllowOrigins -ConfigPath $LauncherConfigPath
@@ -624,6 +664,9 @@ try {
 if ((Test-HttpReady -Url $DashboardUrl -TimeoutSeconds 2) -or (Test-PortListening -Port 3000)) {
   Write-Step "Petclaw dashboard already running at $DashboardUrl"
 } else {
+  $gatewayPort = Get-GatewayPortFromConfig -ConfigPath $LauncherConfigPath
+  $directGatewayUrl = "http://127.0.0.1:$gatewayPort"
+
   if ($PetclawMode -eq "prod") {
     $buildId = Join-Path $petclawDir ".next\BUILD_ID"
     if (-not (Test-Path $buildId)) {
@@ -632,11 +675,11 @@ if ((Test-HttpReady -Url $DashboardUrl -TimeoutSeconds 2) -or (Test-PortListenin
     }
     Write-Step "Starting petclaw dashboard (prod mode)..."
     $escapedLauncherToken = $LauncherToken.Replace("'", "''")
-    $petclawCmd = "`$env:NEXT_PUBLIC_PICOCLAW_API_URL='http://127.0.0.1:18800'; `$env:NEXT_PUBLIC_PICOCLAW_WS_URL='ws://127.0.0.1:18800'; `$env:NEXT_PUBLIC_PICOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:NEXT_PUBLIC_PICOCLAW_USE_CREDENTIALS='true'; Set-Location '$petclawDir'; npm run start -- --hostname 127.0.0.1 --port 3000"
+    $petclawCmd = "`$env:NEXT_PUBLIC_PICOCLAW_API_URL='http://127.0.0.1:18800'; `$env:NEXT_PUBLIC_PICOCLAW_WS_URL='ws://127.0.0.1:18800'; `$env:NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL='$directGatewayUrl'; `$env:NEXT_PUBLIC_PICOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:NEXT_PUBLIC_PICOCLAW_USE_CREDENTIALS='true'; Set-Location '$petclawDir'; npm run start -- --hostname 127.0.0.1 --port 3000"
   } else {
     Write-Step "Starting petclaw dashboard (dev mode)..."
     $escapedLauncherToken = $LauncherToken.Replace("'", "''")
-    $petclawCmd = "`$env:NEXT_PUBLIC_PICOCLAW_API_URL='http://127.0.0.1:18800'; `$env:NEXT_PUBLIC_PICOCLAW_WS_URL='ws://127.0.0.1:18800'; `$env:NEXT_PUBLIC_PICOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:NEXT_PUBLIC_PICOCLAW_USE_CREDENTIALS='true'; Set-Location '$petclawDir'; npm run dev -- --hostname 127.0.0.1 --port 3000 --webpack"
+    $petclawCmd = "`$env:NEXT_PUBLIC_PICOCLAW_API_URL='http://127.0.0.1:18800'; `$env:NEXT_PUBLIC_PICOCLAW_WS_URL='ws://127.0.0.1:18800'; `$env:NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL='$directGatewayUrl'; `$env:NEXT_PUBLIC_PICOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:NEXT_PUBLIC_PICOCLAW_USE_CREDENTIALS='true'; Set-Location '$petclawDir'; npm run dev -- --hostname 127.0.0.1 --port 3000 --webpack"
   }
 
   Start-DetachedPowerShell -Title "GoClaw - Petclaw" -Command $petclawCmd

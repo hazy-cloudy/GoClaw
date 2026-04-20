@@ -16,7 +16,14 @@ import (
 // CORS adds Cross-Origin Resource Sharing headers for API requests.
 func CORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if len(r.URL.Path) >= 5 && r.URL.Path[:5] == "/api/" {
+		path := r.URL.Path
+		// Apply CORS to /api/, /health, /pet/, and /pico/ paths
+		isAPIPath := len(path) >= 5 && path[:5] == "/api/"
+		isHealthPath := path == "/health"
+		isPetPath := len(path) >= 5 && path[:5] == "/pet/"
+		isPicoPath := len(path) >= 6 && path[:6] == "/pico/"
+		
+		if isAPIPath || isHealthPath || isPetPath || isPicoPath {
 			origin := strings.TrimSpace(r.Header.Get("Origin"))
 			allowedOrigin := origin != "" && isAllowedCORSOrigin(origin)
 			if origin != "" {

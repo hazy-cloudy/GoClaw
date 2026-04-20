@@ -1,5 +1,30 @@
+function trimTrailingSlashes(value: string): string {
+  return value.trim().replace(/\/+$/, '')
+}
+
+function normalizeDirectGatewayOrigin(raw: string): string {
+  const normalized = trimTrailingSlashes(raw)
+  if (!normalized) {
+    return ''
+  }
+
+  try {
+    const parsed = new URL(normalized)
+    // `18800` is the launcher port, not direct gateway.
+    // If user env mistakenly points direct gateway to launcher, self-heal to 18790.
+    if (parsed.port === '18800') {
+      parsed.port = '18790'
+    }
+    return trimTrailingSlashes(parsed.toString())
+  } catch {
+    return normalized
+  }
+}
+
 const LOCAL_DEFAULT_ORIGIN = 'http://127.0.0.1:18800'
-const LOCAL_DIRECT_GATEWAY_ORIGIN = process.env.NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL || 'http://127.0.0.1:18790'
+const LOCAL_DIRECT_GATEWAY_ORIGIN = normalizeDirectGatewayOrigin(
+  process.env.NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL || 'http://127.0.0.1:18790'
+)
 export const DIRECT_PET_TOKEN_PATH = '/pet/token'
 export const DIRECT_PET_WS_PATH = '/pet/ws'
 

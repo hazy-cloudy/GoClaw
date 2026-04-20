@@ -77,6 +77,14 @@ func (h *PetHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (*ag
 		return req, agent.HookDecision{Action: agent.HookActionContinue}, nil
 	}
 
+	emotionEngine := char.GetEmotionEngine()
+	if emotionEngine == nil {
+		logger.WarnCF("pet", "PetHook.BeforeLLM: character has nil EmotionEngine, skip", map[string]any{
+			"character_id": char.ID,
+		})
+		return req, agent.HookDecision{Action: agent.HookActionContinue}, nil
+	}
+
 	// 提取最后一条用户消息用于记录对话
 	for i := len(req.Messages) - 1; i >= 0; i-- {
 		if req.Messages[i].Role == "user" {
@@ -85,33 +93,33 @@ func (h *PetHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (*ag
 		}
 	}
 
-	emotions := char.GetEmotionEngine().GetEmotions()
+	emotions := emotionEngine.GetEmotions()
 	actions := h.actionManager.List()
 
 	// 确定 MBTI 类型的各个维度
 	var IE string
-	if char.GetEmotionEngine().GetPersonality().IE > 50 {
+	if emotionEngine.GetPersonality().IE > 50 {
 		IE = "i"
 	} else {
 		IE = "e"
 	}
 
 	var SN string
-	if char.GetEmotionEngine().GetPersonality().SN > 50 {
+	if emotionEngine.GetPersonality().SN > 50 {
 		SN = "s"
 	} else {
 		SN = "n"
 	}
 
 	var TF string
-	if char.GetEmotionEngine().GetPersonality().TF > 50 {
+	if emotionEngine.GetPersonality().TF > 50 {
 		TF = "t"
 	} else {
 		TF = "f"
 	}
 
 	var JP string
-	if char.GetEmotionEngine().GetPersonality().JP > 50 {
+	if emotionEngine.GetPersonality().JP > 50 {
 		JP = "j"
 	} else {
 		JP = "p"
@@ -242,6 +250,21 @@ func (h *PetHook) BeforeLLM(ctx context.Context, req *agent.LLMHookRequest) (*ag
 //  7. 检查情绪阈值，决定是否推送
 //  8. 从内容中移除所有标签
 func (h *PetHook) AfterLLM(ctx context.Context, resp *agent.LLMHookResponse) (*agent.LLMHookResponse, agent.HookDecision, error) {
+	// Recover from panics in pet hook processing to prevent gateway crash
+	defer func() {
+		if r := recover(); r != nil {
+			logger.WarnCF("pet", "AfterLLM recovered from panic", map[string]any{
+				"panic": r,
+				"content_length": func() int {
+					if resp != nil && resp.Response != nil {
+						return len(resp.Response.Content)
+					}
+					return -1
+				}(),
+			})
+		}
+	}()
+
 	if resp == nil || resp.Response == nil {
 		logger.InfoCF("pet", "PetHook.AfterLLM: response is nil, skip", nil)
 		return resp, agent.HookDecision{Action: agent.HookActionContinue}, nil
@@ -264,21 +287,25 @@ func (h *PetHook) AfterLLM(ctx context.Context, resp *agent.LLMHookResponse) (*a
 	})
 
 	currentChar := h.charManager.GetCurrent()
+	var emotionEngine *emotion.EmotionEngine
+	if currentChar != nil {
+		emotionEngine = currentChar.GetEmotionEngine()
+	}
 
 	emotionTags := parseEmotionTags(content)
-	if len(emotionTags) > 0 && currentChar != nil {
+	if len(emotionTags) > 0 && emotionEngine != nil {
 		logger.InfoCF("pet", "PetHook: parsed emotion tags", map[string]any{
 			"emotion_tags": emotionTags,
 		})
-		currentChar.GetEmotionEngine().UpdateFromLLMTagsDelta(emotionTags)
+		emotionEngine.UpdateFromLLMTagsDelta(emotionTags)
 	}
 
 	mbtiTags := emotion.ParseMBTITags(content)
-	if len(mbtiTags) > 0 && currentChar != nil {
+	if len(mbtiTags) > 0 && emotionEngine != nil {
 		logger.InfoCF("pet", "PetHook: parsed MBTI tags", map[string]any{
 			"mbti_tags": mbtiTags,
 		})
-		currentChar.GetEmotionEngine().UpdateMBTIFromTags(mbtiTags)
+		emotionEngine.UpdateMBTIFromTags(mbtiTags)
 	}
 
 	actionNames := h.actionManager.ParseActionTags(content)
@@ -300,8 +327,8 @@ func (h *PetHook) AfterLLM(ctx context.Context, resp *agent.LLMHookResponse) (*a
 		}
 	}
 
-	if currentChar != nil {
-		if shouldPush, push := currentChar.GetEmotionEngine().ShouldPush(); shouldPush {
+	if emotionEngine != nil {
+		if shouldPush, push := emotionEngine.ShouldPush(); shouldPush {
 			logger.InfoCF("pet", "PetHook: emotion threshold triggered push", map[string]any{
 				"emotion": push.Emotion,
 				"score":   push.Score,

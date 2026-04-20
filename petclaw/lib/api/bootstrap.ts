@@ -112,23 +112,30 @@ async function waitGatewayRunning(maxAttempts = 12, delayMs = 800): Promise<bool
   return false
 }
 
-async function isWsProxyReady(wsPath: string): Promise<boolean> {
-  const url = `${getApiBaseUrl()}${wsPath}?session_id=preflight`
-  const res = await fetch(url, withLauncherAuthRequest(url, { method: 'GET' }))
-
-  // Without upgrade headers this endpoint is expected to return 400/403,
-  // but should not return 503 when gateway proxy is unavailable.
-  return res.status !== 503
+async function isLauncherChannelReady(tokenPath: string): Promise<boolean> {
+  const url = `${getApiBaseUrl()}${tokenPath}`
+  try {
+    const res = await fetch(url, withLauncherAuthRequest(url, { method: 'GET' }))
+    if (!res.ok) {
+      return false
+    }
+    const data = (await res.json()) as { enabled?: boolean; ws_url?: string }
+    return Boolean(data.enabled && data.ws_url)
+  } catch {
+    return false
+  }
 }
 
 async function ensureWsProxyReady(): Promise<boolean> {
-  const petReady = await isWsProxyReady(API_ENDPOINTS.CHAT.WS).catch(() => false)
+  // Avoid fetch preflight against /pet/ws and /pico/ws directly.
+  // Those endpoints are websocket upgrade paths and can be blocked by CORS
+  // preflight redirects in browser-only checks.
+  const petReady = await isLauncherChannelReady(API_ENDPOINTS.PET.TOKEN)
   if (petReady) {
     return true
   }
 
-  const picoReady = await isWsProxyReady(API_ENDPOINTS.CHAT.WS_LEGACY).catch(() => false)
-  return picoReady
+  return isLauncherChannelReady(API_ENDPOINTS.PICO.TOKEN)
 }
 
 async function ensureChannelSetup(): Promise<void> {
