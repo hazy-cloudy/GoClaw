@@ -79,6 +79,22 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Setup Node (Windows launcher build)
+        if: matrix.goos == 'windows'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build launcher embedded frontend (Windows)
+        if: matrix.goos == 'windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          cd web/frontend
+          pnpm install --frozen-lockfile
+          pnpm build:backend
+
       - name: Prepare onboard workspace
         shell: bash
         run: go generate ./cmd/picoclaw/internal/onboard
@@ -107,6 +123,16 @@ jobs:
               -o "dist/${BIN}" \
               "${BUILD_ENTRY}"
 
+          if [[ "${{ matrix.goos }}" == "windows" ]]; then
+            GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} GOARM="${GOARM}" CGO_ENABLED=0 \
+              go build \
+                -trimpath \
+                -tags "${BUILD_TAGS}" \
+                -ldflags "-s -w -X github.com/sipeed/picoclaw/pkg/config.Version=${VERSION} -X github.com/sipeed/picoclaw/pkg/config.GitCommit=${SHORT_SHA} -X github.com/sipeed/picoclaw/pkg/config.BuildTime=${BUILD_TIME}" \
+                -o "dist/${APP_NAME}-launcher.exe" \
+                ./web/backend
+          fi
+
       - name: Package
         shell: bash
         run: |
@@ -134,7 +160,24 @@ jobs:
               'pause >nul' \
               'exit /b %EXIT_CODE%' \
               > "${BIN}-gateway.bat"
-            zip "${BASE}.zip" "${BIN}.exe" "${BIN}-gateway.bat"
+            zip "${BASE}.zip" "${BIN}.exe" "${BIN}-launcher.exe" "${BIN}-gateway.bat"
+
+            ALL_BASE="${APP_NAME}_AllInOne_${{ matrix.file_os }}_${{ matrix.file_arch }}"
+            mkdir -p allinone/scripts
+            cp -f "${BIN}.exe" allinone/clawpet.exe
+            cp -f "${BIN}.exe" allinone/picoclaw.exe
+            cp -f "${BIN}-launcher.exe" allinone/clawpet-launcher.exe
+            cp -f "${BIN}-launcher.exe" allinone/picoclaw-launcher.exe
+            cp -f "${BIN}-gateway.bat" allinone/clawpet-gateway.bat
+            cp -f ../GoClaw-OneClickStart.bat allinone/GoClaw-OneClickStart.bat
+            cp -f ../GoClaw-OneClickStart.ps1 allinone/GoClaw-OneClickStart.ps1
+            cp -f ../scripts/run-goclaw-dev.ps1 allinone/scripts/run-goclaw-dev.ps1
+            cp -r ../petclaw allinone/petclaw
+            cp -r ../electron-frontend allinone/electron-frontend
+            (
+              cd allinone
+              zip -r "../${ALL_BASE}.zip" .
+            )
           else
             printf '%s\n' \
               '#!/usr/bin/env sh' \
