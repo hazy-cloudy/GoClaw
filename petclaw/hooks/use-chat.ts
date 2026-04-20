@@ -49,9 +49,73 @@ interface AudioPushData {
 }
 
 const EMPTY_SESSION_TITLE = "新对话"
+const SESSIONS_STORAGE_KEY = "petclaw_sessions"
+const ACTIVE_SESSION_KEY = "petclaw_active_session"
+
 function normalizeTimestamp(value: number | string): number {
   const numeric = typeof value === "number" ? value : Number(value)
   return Number.isFinite(numeric) ? numeric : Date.now()
+}
+
+// localStorage 持久化函数
+function saveSessionsToStorage(sessions: ChatSessionState[], activeSessionId: string) {
+  try {
+    const data = {
+      sessions: sessions.map(session => ({
+        id: session.id,
+        title: session.title,
+        preview: session.preview,
+        updatedAt: session.updatedAt,
+        messageCount: session.messageCount,
+        messages: session.messages,
+      })),
+      activeSessionId,
+      savedAt: Date.now(),
+    }
+    localStorage.setItem(SESSIONS_STORAGE_KEY, JSON.stringify(data))
+    localStorage.setItem(ACTIVE_SESSION_KEY, activeSessionId)
+    console.log("[petclaw] 会话已保存到 localStorage", {
+      sessionCount: sessions.length,
+      activeSessionId,
+      savedAt: data.savedAt,
+    })
+  } catch (error) {
+    console.error("[petclaw] 保存会话到 localStorage 失败:", error)
+  }
+}
+
+// 从 localStorage 恢复会话
+function loadSessionsFromStorage(): {
+  sessions: ChatSessionState[]
+  activeSessionId: string
+} | null {
+  try {
+    const dataStr = localStorage.getItem(SESSIONS_STORAGE_KEY)
+    if (!dataStr) {
+      console.log("[petclaw] localStorage 中没有保存的会话")
+      return null
+    }
+
+    const data = JSON.parse(dataStr)
+    if (!data.sessions || !Array.isArray(data.sessions)) {
+      console.warn("[petclaw] localStorage 数据格式错误")
+      return null
+    }
+
+    console.log("[petclaw] 从 localStorage 恢复会话", {
+      sessionCount: data.sessions.length,
+      activeSessionId: data.activeSessionId,
+      savedAt: data.savedAt ? new Date(data.savedAt).toLocaleString() : "unknown",
+    })
+
+    return {
+      sessions: data.sessions,
+      activeSessionId: data.activeSessionId || data.sessions[0]?.id || "",
+    }
+  } catch (error) {
+    console.error("[petclaw] 从 localStorage 恢复会话失败:", error)
+    return null
+  }
 }
 
 function createSessionState(id: string): ChatSessionState {
@@ -148,13 +212,29 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
   const [error, setError] = useState<string | null>(null)
   const wsRef = useRef(getWebSocketInstance())
   const optionsRef = useRef(options)
-  const initialSessionIdRef = useRef(wsRef.current.ensureSessionId())
-  const [activeSessionId, setActiveSessionId] = useState(
-    initialSessionIdRef.current,
+
+  // 从 localStorage 恢复会话，或创建新会话
+  const [savedData, setSavedData] = useState<{
+    sessions: ChatSessionState[]
+    activeSessionId: string
+  }>(() => {
+    const loaded = loadSessionsFromStorage()
+    if (loaded) {
+      return loaded
+    }
+    const newSessionId = wsRef.current.ensureSessionId()
+    return {
+      sessions: [createSessionState(newSessionId)],
+      activeSessionId: newSessionId,
+    }
+  })
+
+  const [sessionsState, setSessionsState] = useState<ChatSessionState[]>(
+    savedData.sessions
   )
-  const [sessionsState, setSessionsState] = useState<ChatSessionState[]>([
-    createSessionState(initialSessionIdRef.current),
-  ])
+  const [activeSessionId, setActiveSessionId] = useState(
+    savedData.activeSessionId
+  )
   const activeSessionIdRef = useRef(activeSessionId)
   const audioStreamRef = useRef<{ chatId: number | null; chunks: Uint8Array[] }>(
     { chatId: null, chunks: [] },
@@ -165,8 +245,8 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
 
   const updateSessionMessages = useCallback(
     (sessionId: string, updater: (messages: ChatMessage[]) => ChatMessage[]) => {
-      setSessionsState((prev) =>
-        prev.map((session) => {
+      setSessionsState((prev) => {
+        const next = prev.map((session) => {
           if (session.id !== sessionId) {
             return session
           }
@@ -180,10 +260,15 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
             }),
             messages: nextMessages,
           }
-        }),
-      )
+        })
+
+        // 保存到 localStorage（使用新计算的 next）
+        saveSessionsToStorage(next, activeSessionId)
+
+        return next
+      })
     },
-    [],
+    [activeSessionId],
   )
 
   const showBubble = useCallback((text: string | null, audio?: string) => {
@@ -248,6 +333,21 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId
   }, [activeSessionId])
+
+  // 页面卸载或组件卸载时保存会话
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      saveSessionsToStorage(sessionsState, activeSessionId)
+    }
+
+    window.addEventListener("beforeunload", handleBeforeUnload)
+
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload)
+      // 组件卸载时也保存
+      saveSessionsToStorage(sessionsState, activeSessionId)
+    }
+  }, [sessionsState, activeSessionId])
 
   useEffect(() => {
     const ws = wsRef.current
@@ -421,6 +521,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     setIsTyping(false)
     setError(null)
 
+    let updatedSessions: ChatSessionState[]
     setSessionsState((prev) => {
       const currentSession = prev.find(
         (session) => session.id === activeSessionIdRef.current,
@@ -430,7 +531,12 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         ? prev
         : prev.filter((session) => session.id !== activeSessionIdRef.current)
 
-      return [nextSession, ...preservedSessions]
+      updatedSessions = [nextSession, ...preservedSessions]
+
+      // 保存到 localStorage
+      saveSessionsToStorage(updatedSessions, nextSessionId)
+
+      return updatedSessions
     })
     setActiveSessionId(nextSessionId)
 
@@ -451,11 +557,14 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       lastAssistantTextRef.current = ""
       setIsTyping(false)
       setError(null)
+
+      // 保存当前会话状态
+      saveSessionsToStorage(sessionsState, sessionId)
       setActiveSessionId(sessionId)
 
       await connectWithBootstrap()
     },
-    [connectWithBootstrap],
+    [connectWithBootstrap, sessionsState],
   )
 
   const reconnect = useCallback(() => {
