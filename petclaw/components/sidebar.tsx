@@ -1,4 +1,4 @@
-﻿"use client"
+"use client"
 
 import { useEffect, useRef, useState, type CSSProperties } from "react"
 import {
@@ -49,6 +49,12 @@ export function Sidebar({ activeNav, setActiveNav, chat }: SidebarProps) {
   const [scheduleImportHint, setScheduleImportHint] = useState("")
   const { data: gatewayStatus } = useGatewayStatus()
   const scheduleFileInputRef = useRef<HTMLInputElement | null>(null)
+  // 防止 hydration 不匹配：初始渲染时显示加载中状态
+  const [isHydrated, setIsHydrated] = useState(false)
+
+  useEffect(() => {
+    setIsHydrated(true)
+  }, [])
 
   useEffect(() => {
     try {
@@ -239,7 +245,12 @@ export function Sidebar({ activeNav, setActiveNav, chat }: SidebarProps) {
         <div className="mt-6">
           <p className="text-xs text-muted-foreground px-3 mb-2">对话记录</p>
           <div className="space-y-1">
-            {chat.sessions.length === 0 ? (
+            {!isHydrated ? (
+              // Hydration 完成前显示加载中，避免内容不匹配
+              <div className="px-3 py-2 text-xs text-muted-foreground">
+                加载中...
+              </div>
+            ) : chat.sessions.length === 0 ? (
               <div className="px-3 py-2 text-xs text-muted-foreground">
                 暂无历史对话
               </div>

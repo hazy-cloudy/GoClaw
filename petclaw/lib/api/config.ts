@@ -223,4 +223,9 @@ export const API_ENDPOINTS = {
     SETUP: '/api/pico/setup',
     ONBOARDING: '/api/pico/onboarding',
   },
+  SESSIONS: {
+    LIST: '/api/sessions',
+    GET: (id: string) => `/api/sessions/${encodeURIComponent(id)}`,
+    DELETE: (id: string) => `/api/sessions/${encodeURIComponent(id)}`,
+  },
 } as const

@@ -5,6 +5,8 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { ensureBackendReadyForChat } from "@/lib/api/bootstrap"
 import {
   getWebSocketInstance,
+  getSessions,
+  getSessionHistory,
   type ChatMessage,
   type WSEvent,
 } from "@/lib/api"
@@ -59,6 +61,11 @@ function normalizeTimestamp(value: number | string): number {
 
 // localStorage 持久化函数
 function saveSessionsToStorage(sessions: ChatSessionState[], activeSessionId: string) {
+  // 检查是否在浏览器环境中
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return
+  }
+  
   try {
     const data = {
       sessions: sessions.map(session => ({
@@ -72,8 +79,8 @@ function saveSessionsToStorage(sessions: ChatSessionState[], activeSessionId: st
       activeSessionId,
       savedAt: Date.now(),
     }
-    localStorage.setItem(SESSIONS_STORAGE_KEY, JSON.stringify(data))
-    localStorage.setItem(ACTIVE_SESSION_KEY, activeSessionId)
+    window.localStorage.setItem(SESSIONS_STORAGE_KEY, JSON.stringify(data))
+    window.localStorage.setItem(ACTIVE_SESSION_KEY, activeSessionId)
     console.log("[petclaw] 会话已保存到 localStorage", {
       sessionCount: sessions.length,
       activeSessionId,
@@ -89,8 +96,14 @@ function loadSessionsFromStorage(): {
   sessions: ChatSessionState[]
   activeSessionId: string
 } | null {
+  // 检查是否在浏览器环境中
+  if (typeof window === 'undefined' || !window.localStorage) {
+    console.log("[petclaw] localStorage 不可用（SSR环境）")
+    return null
+  }
+  
   try {
-    const dataStr = localStorage.getItem(SESSIONS_STORAGE_KEY)
+    const dataStr = window.localStorage.getItem(SESSIONS_STORAGE_KEY)
     if (!dataStr) {
       console.log("[petclaw] localStorage 中没有保存的会话")
       return null
@@ -326,6 +339,79 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     }
   }, [])
 
+  // 从后端加载会话历史
+  const loadedFromBackendRef = useRef(false)
+  const loadConversationsFromBackend = useCallback(async () => {
+    console.log("[petclaw] 开始从后端加载会话历史, loadedFromBackendRef:", loadedFromBackendRef.current)
+    // 防止重复加载
+    if (loadedFromBackendRef.current) {
+      console.log("[petclaw] 已从后端加载过会话，跳过")
+      return
+    }
+    
+    try {
+      // 从后端获取会话列表
+      const sessionList = await getSessions(0, 50)
+      
+      if (!sessionList || sessionList.length === 0) {
+        console.log("[petclaw] 后端无历史会话")
+        loadedFromBackendRef.current = true
+        return
+      }
+      
+      console.log("[petclaw] 从后端加载会话历史:", sessionList.length, "个会话")
+      
+      // 如果当前会话为空且有后端会话，则加载第一个后端会话
+      if (sessionsState.length === 1 && sessionsState[0].messages.length === 0) {
+        // 使用后端返回的第一个会话的 ID
+        const firstSession = sessionList[0]
+        const sessionDetail = await getSessionHistory(firstSession.id)
+        
+        if (sessionDetail && sessionDetail.messages && sessionDetail.messages.length > 0) {
+          // 转换消息格式
+          const messages: ChatMessage[] = sessionDetail.messages.map((msg, index) => ({
+            id: `backend-${firstSession.id}-${index}`,
+            role: msg.role,
+            content: msg.content,
+            timestamp: new Date(firstSession.updated).getTime() - (sessionDetail.messages.length - index) * 1000,
+          }))
+          
+          setSessionsState([{
+            id: activeSessionId,
+            title: firstSession.title || "历史对话",
+            preview: firstSession.preview || "",
+            updatedAt: new Date(firstSession.updated).getTime(),
+            messageCount: messages.length,
+            messages,
+          }])
+          loadedFromBackendRef.current = true
+          console.log("[petclaw] 已加载后端会话:", firstSession.title, messages.length, "条消息")
+        }
+      } else {
+        // 如果当前已有会话，将后端会话添加到列表中
+        const backendSessions: ChatSessionState[] = sessionList.slice(0, 10).map(sess => ({
+          id: sess.id,
+          title: sess.title || "历史对话",
+          preview: sess.preview || "",
+          updatedAt: new Date(sess.updated).getTime(),
+          messageCount: sess.message_count,
+          messages: [], // 消息需要按需加载
+        }))
+        
+        setSessionsState(prev => {
+          // 合并后端会话，避免重复
+          const existingIds = new Set(prev.map(s => s.id))
+          const newSessions = backendSessions.filter(s => !existingIds.has(s.id))
+          return [...prev, ...newSessions]
+        })
+        loadedFromBackendRef.current = true
+        console.log("[petclaw] 已添加后端会话列表:", sessionList.length, "个")
+      }
+    } catch (err) {
+      console.warn("[petclaw] 加载后端会话失败:", err)
+    }
+  }, [sessionsState, activeSessionId, setSessionsState])
+
   useEffect(() => {
     optionsRef.current = options
   }, [options])
@@ -363,6 +449,8 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
           setIsConnected(true)
           setError(null)
           optionsRef.current.onConnectionChange?.(true)
+          // 连接成功后尝试从后端加载会话历史
+          void loadConversationsFromBackend()
           break
 
         case "disconnected":
@@ -374,6 +462,13 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         case "message":
           if (typeof event.data === "object" && event.data) {
             const message = event.data as ChatMessage
+            console.log("[petclaw] 收到 WebSocket 消息:", {
+              id: message.id,
+              role: message.role,
+              content: message.content.substring(0, 50),
+              streaming: message.streaming,
+              contentLength: message.content.length
+            })
             updateSessionMessages(activeSessionIdRef.current, (prev) =>
               mergeMessage(prev, message),
             )
@@ -482,6 +577,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     connectWithBootstrap,
     playAudioBase64,
     updateSessionMessages,
+    loadConversationsFromBackend,
   ])
 
   const sendMessage = useCallback(

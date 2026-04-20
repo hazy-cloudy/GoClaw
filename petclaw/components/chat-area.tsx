@@ -54,6 +54,8 @@ export function ChatArea({ chat }: ChatAreaProps) {
   const [activeTab, setActiveTab] = useState("聊天")
   const [message, setMessage] = useState("")
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  // 防止 hydration 不匹配：初始渲染时显示加载中状态
+  const [isHydrated, setIsHydrated] = useState(false)
   const {
     isListening,
     isSupported: isVoiceInputSupported,
@@ -78,6 +80,10 @@ export function ChatArea({ chat }: ChatAreaProps) {
   } = chat
 
   useEffect(() => {
+    setIsHydrated(true)
+  }, [])
+
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages])
 
@@ -100,7 +106,7 @@ export function ChatArea({ chat }: ChatAreaProps) {
     sendMessage(`${title}: ${description}`)
   }
 
-  const hasMessages = messages.length > 0
+  const hasMessages = isHydrated && messages.length > 0
 
   return (
     <div

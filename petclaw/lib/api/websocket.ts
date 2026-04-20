@@ -15,6 +15,7 @@ const PUSH_TYPE_AI_CHAT = "ai_chat"
 const PUSH_TYPE_AUDIO = "audio"
 const PUSH_TYPE_EMOTION_CHANGE = "emotion_change"
 const PUSH_TYPE_ACTION_TRIGGER = "action_trigger"
+const ACTION_CONVERSATION_LIST = "conversation_list"
 
 export interface ChatMessage {
   id: string
@@ -73,6 +74,7 @@ export type WSEventType =
   | "reconnecting"
   | "emotion_change"
   | "action_trigger"
+  | "conversation_list"
 
 export interface WSEvent {
   type: WSEventType
@@ -94,6 +96,7 @@ export class PicoClawWebSocket {
   private handlers: Set<WSEventHandler> = new Set()
   private wsMode: WSMode = "pet"
   private messageQueue: OutboundRequest[] = []
+  private pendingRequests: Map<string, { resolve: (data: unknown) => void; reject: (err: Error) => void }> = new Map()
   private isConnecting = false
   private msgIdCounter = 0
   private lastConnectUrl = ""
@@ -455,6 +458,7 @@ export class PicoClawWebSocket {
       }
 
       this.activeAssistantContent += text
+      console.log("[websocket] text 类型消息 - ID:", this.activeAssistantMessageId, "追加内容长度:", text.length, "总长度:", this.activeAssistantContent.length)
       this.emit({
         type: "message",
         data: {
@@ -469,16 +473,15 @@ export class PicoClawWebSocket {
     }
 
     if (contentType === "final") {
+      console.log("[websocket] final 类型消息 - 原始内容:", this.activeAssistantContent.substring(0, 50), "新内容:", text?.substring(0, 50))
+      // final 类型应该覆盖内容，而不是追加
+      // 因为 final 通常包含完整的内容
       if (text) {
-        if (!this.activeAssistantMessageId) {
-          this.activeAssistantMessageId = `assistant-${timestamp}`
-          this.activeAssistantTimestamp = timestamp
-        }
-        this.activeAssistantContent += text
+        this.activeAssistantContent = text
       }
 
       const finalContent = normalizeIncomingText(
-        this.activeAssistantContent || text,
+        this.activeAssistantContent,
       )
       if (!finalContent) {
         this.emit({ type: "typing", data: "false" })
@@ -490,6 +493,7 @@ export class PicoClawWebSocket {
         this.activeAssistantTimestamp = timestamp
       }
 
+      console.log("[websocket] final 消息 - ID:", this.activeAssistantMessageId, "最终内容长度:", finalContent.length)
       this.emit({
         type: "message",
         data: {
@@ -533,7 +537,17 @@ export class PicoClawWebSocket {
     })
   }
 
-  private handleResponse(_resp: PetResponse): void {}
+  private handleResponse(resp: PetResponse): void {
+    if (resp.request_id && this.pendingRequests.has(resp.request_id)) {
+      const { resolve, reject } = this.pendingRequests.get(resp.request_id)!
+      this.pendingRequests.delete(resp.request_id)
+      if (resp.status === "ok") {
+        resolve(resp.data)
+      } else {
+        reject(new Error(resp.error || "Request failed"))
+      }
+    }
+  }
 
   disconnect(): void {
     if (this.ws) {
@@ -556,12 +570,24 @@ export class PicoClawWebSocket {
     })
   }
 
-  private sendAction(action: string, data?: Record<string, unknown>): void {
-    const requestId = `req-${++this.msgIdCounter}-${Date.now()}`
+  requestConversationList(characterId: string, limit = 100): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      const requestId = `req-${++this.msgIdCounter}-${Date.now()}`
+      this.pendingRequests.set(requestId, { resolve, reject })
+      this.sendAction(ACTION_CONVERSATION_LIST, {
+        character_id: characterId,
+        limit: limit,
+        offset: 0,
+      }, requestId)
+    })
+  }
+
+  private sendAction(action: string, data?: Record<string, unknown>, requestId?: string): void {
+    const reqId = requestId || `req-${++this.msgIdCounter}-${Date.now()}`
     const msg: PetRequest = {
       action,
       data,
-      request_id: requestId,
+      request_id: reqId,
     }
 
     if (this.ws?.readyState === WebSocket.OPEN) {
@@ -582,11 +608,16 @@ export class PicoClawWebSocket {
   }
 
   subscribe(handler: WSEventHandler): () => void {
+    console.log("[websocket] subscribe 被调用, 当前 handlers 数量:", this.handlers.size, "新增后:", this.handlers.size + 1)
     this.handlers.add(handler)
-    return () => this.handlers.delete(handler)
+    return () => {
+      console.log("[websocket] unsubscribe 被调用, 当前 handlers 数量:", this.handlers.size, "移除后:", this.handlers.size - 1)
+      this.handlers.delete(handler)
+    }
   }
 
   private emit(event: WSEvent): void {
+    console.log("[websocket] emit 事件:", event.type, "handlers 数量:", this.handlers.size)
     this.handlers.forEach((handler) => handler(event))
   }
 
