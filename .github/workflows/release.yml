@@ -117,31 +117,31 @@ jobs:
           BIN="${APP_NAME}"
 
           if [[ "${{ matrix.goos }}" == "windows" ]]; then
-            cat > "${BIN}-gateway.bat" <<'EOF'
-@echo off
-setlocal
-set "SELF_DIR=%~dp0"
-"%SELF_DIR%clawpet.exe" gateway %*
-set "EXIT_CODE=%ERRORLEVEL%"
-
-if "%CLAWPET_NO_PAUSE%"=="1" (
-  exit /b %EXIT_CODE%
-)
-
-echo.
-echo clawpet gateway exited with code %EXIT_CODE%.
-echo Press any key to close...
-pause >nul
-exit /b %EXIT_CODE%
-EOF
+            printf '%s\n' \
+              '@echo off' \
+              'setlocal' \
+              'set "SELF_DIR=%~dp0"' \
+              '"%SELF_DIR%clawpet.exe" gateway %*' \
+              'set "EXIT_CODE=%ERRORLEVEL%"' \
+              '' \
+              'if "%CLAWPET_NO_PAUSE%"=="1" (' \
+              '  exit /b %EXIT_CODE%' \
+              ')' \
+              '' \
+              'echo.' \
+              'echo clawpet gateway exited with code %EXIT_CODE%.' \
+              'echo Press any key to close...' \
+              'pause >nul' \
+              'exit /b %EXIT_CODE%' \
+              > "${BIN}-gateway.bat"
             zip "${BASE}.zip" "${BIN}.exe" "${BIN}-gateway.bat"
           else
-            cat > "${BIN}-gateway" <<'EOF'
-#!/usr/bin/env sh
-set -eu
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-exec "$SCRIPT_DIR/clawpet" gateway "$@"
-EOF
+            printf '%s\n' \
+              '#!/usr/bin/env sh' \
+              'set -eu' \
+              'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"' \
+              'exec "$SCRIPT_DIR/clawpet" gateway "$@"' \
+              > "${BIN}-gateway"
             chmod +x "${BIN}-gateway"
             tar -czf "${BASE}.tar.gz" "${BIN}" "${BIN}-gateway"
           fi
