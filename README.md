@@ -55,6 +55,11 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-goclaw-dev.ps1 -Restart -
 
 and starts launcher, gateway, petclaw dashboard, electron frontend dev server, and Electron desktop pet in order.
 
+Notes for first launch:
+
+- If no model is configured yet, gateway startup may be deferred until onboarding/model setup is completed.
+- The package will auto-install npm dependencies for `petclaw` and `electron-frontend` on first run, so startup can take longer once.
+
 ## One-Click Startup
 
 You can also use the root one-click entry:
