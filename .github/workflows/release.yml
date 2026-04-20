@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  APP_NAME: picoclaw
+  APP_NAME: clawpet
   BUILD_TAGS: goolm,stdjson
   BUILD_ENTRY: ./cmd/picoclaw
 
@@ -117,9 +117,33 @@ jobs:
           BIN="${APP_NAME}"
 
           if [[ "${{ matrix.goos }}" == "windows" ]]; then
-            zip "${BASE}.zip" "${BIN}.exe"
+            cat > "${BIN}-gateway.bat" <<'EOF'
+@echo off
+setlocal
+set "SELF_DIR=%~dp0"
+"%SELF_DIR%clawpet.exe" gateway %*
+set "EXIT_CODE=%ERRORLEVEL%"
+
+if "%CLAWPET_NO_PAUSE%"=="1" (
+  exit /b %EXIT_CODE%
+)
+
+echo.
+echo clawpet gateway exited with code %EXIT_CODE%.
+echo Press any key to close...
+pause >nul
+exit /b %EXIT_CODE%
+EOF
+            zip "${BASE}.zip" "${BIN}.exe" "${BIN}-gateway.bat"
           else
-            tar -czf "${BASE}.tar.gz" "${BIN}"
+            cat > "${BIN}-gateway" <<'EOF'
+#!/usr/bin/env sh
+set -eu
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+exec "$SCRIPT_DIR/clawpet" gateway "$@"
+EOF
+            chmod +x "${BIN}-gateway"
+            tar -czf "${BASE}.tar.gz" "${BIN}" "${BIN}-gateway"
           fi
 
       - name: Upload package artifact
