@@ -45,10 +45,6 @@ jobs:
             goarch: loong64
             file_os: Linux
             file_arch: loong64
-          - goos: linux
-            goarch: mipsle
-            file_os: Linux
-            file_arch: mipsle
           - goos: darwin
             goarch: amd64
             file_os: Darwin
@@ -72,14 +68,6 @@ jobs:
           - goos: freebsd
             goarch: arm64
             file_os: Freebsd
-            file_arch: arm64
-          - goos: netbsd
-            goarch: amd64
-            file_os: Netbsd
-            file_arch: x86_64
-          - goos: netbsd
-            goarch: arm64
-            file_os: Netbsd
             file_arch: arm64
 
     steps:
