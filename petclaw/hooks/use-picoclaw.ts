@@ -116,41 +116,22 @@ export function useSkills() {
 }
 
 export function useBuiltinSkills() {
-  return useSWR('skills-builtin', async () => {
-    const data = await fetcher(skillsApi.list)
-    return {
-      skills: data.skills.filter((skill) => skill.source === 'builtin'),
-    }
-  })
+  return useSWR('skills-builtin', () => fetcher(skillsApi.builtin))
 }
 
 export function useWorkspaceSkills() {
-  return useSWR('skills-workspace', async () => {
-    const data = await fetcher(skillsApi.list)
-    return {
-      skills: data.skills.filter((skill) => skill.source === 'workspace'),
-    }
-  })
+  return useSWR('skills-workspace', () => fetcher(skillsApi.workspace))
 }
 
 export function useSkillMutations() {
   const importSkill = useSWRMutation(
     'skills',
-    (_, { arg }: { arg: File }) => skillsApi.import(arg)
-  )
-  const installSkill = useSWRMutation(
-    'skills',
-    (
-      _,
-      {
-        arg,
-      }: { arg: { slug: string; registry: string; version?: string; force?: boolean } }
-    ) => skillsApi.install(arg)
+    (_, { arg }: { arg: string }) => skillsApi.import(arg)
   )
   const remove = useSWRMutation('skills', (_, { arg }: { arg: string }) =>
     skillsApi.delete(arg)
   )
-  return { importSkill, installSkill, remove }
+  return { importSkill, remove }
 }
 
 // 工具管理

@@ -235,12 +235,12 @@ export const API_ENDPOINTS = {
     CONFIG: (id: string) => `/api/channels/${id}/config`,
   },
   SKILLS: {
-    LIST: '/api/skills',
-    DETAIL: (name: string) => `/api/skills/${name}`,
-    SEARCH: '/api/skills/search',
-    INSTALL: '/api/skills/install',
-    IMPORT: '/api/skills/import',
-    DELETE: (name: string) => `/api/skills/${name}`,
+    LIST: '/api/agent/skills',
+    BUILTIN: '/api/agent/skills/builtin',
+    GLOBAL: '/api/agent/skills/global',
+    WORKSPACE: '/api/agent/skills/workspace',
+    IMPORT: '/api/agent/skills/import',
+    DELETE: (id: string) => `/api/agent/skills/${id}`,
   },
   TOOLS: {
     LIST: '/api/agent/tools',
