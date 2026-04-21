@@ -683,14 +683,15 @@ Ensure-NpmDeps -ProjectDir $electronDir -DisplayName "electron-frontend"
 
 $escapedDashboard = $DashboardUrl.Replace("'", "''")
 $escapedLauncherToken = $LauncherToken.Replace("'", "''")
-$openPanelOnReady = if ($NoTerminalWindows) { "1" } else { "0" }
+$showStartup = if ($NoTerminalWindows -or $env:GOCLAW_SHOW_STARTUP -eq "1") { "1" } else { "0" }
+$openPanelOnReady = if ($NoTerminalWindows -or $env:GOCLAW_OPEN_PANEL_ON_READY -eq "1") { "1" } else { "0" }
 
 $existingElectron = @(Get-Process -Name electron -ErrorAction SilentlyContinue)
 $electronRunning = $existingElectron.Count -gt 0
 
-if ($NoTerminalWindows -and -not $electronRunning) {
+if ($showStartup -eq "1" -and -not $electronRunning) {
   Write-Step "Starting desktop shell with startup progress page..."
-  $electronBootstrapCmd = "`$env:GOCLAW_DASHBOARD_URL='$escapedDashboard'; `$env:GOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:GOCLAW_SHOW_STARTUP='1'; `$env:GOCLAW_OPEN_PANEL_ON_READY='$openPanelOnReady'; Set-Location '$electronDir'; npx electron src/main.js"
+  $electronBootstrapCmd = "`$env:GOCLAW_DASHBOARD_URL='$escapedDashboard'; `$env:GOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:GOCLAW_SHOW_STARTUP='$showStartup'; `$env:GOCLAW_OPEN_PANEL_ON_READY='$openPanelOnReady'; Set-Location '$electronDir'; npx electron src/main.js"
   Start-DetachedPowerShell -Title "GoClaw - Electron Boot" -Command $electronBootstrapCmd
   Start-Sleep -Milliseconds 800
   $electronRunning = $true
@@ -740,7 +741,7 @@ if ($existingElectron.Count -gt 0) {
   Write-Step "Electron desktop pet already running."
 } else {
   Write-Step "Starting electron desktop pet process..."
-  $electronCmd = "`$env:GOCLAW_DASHBOARD_URL='$escapedDashboard'; `$env:GOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:GOCLAW_OPEN_PANEL_ON_READY='$openPanelOnReady'; Set-Location '$electronDir'; npx electron src/main.js"
+  $electronCmd = "`$env:GOCLAW_DASHBOARD_URL='$escapedDashboard'; `$env:GOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:GOCLAW_SHOW_STARTUP='$showStartup'; `$env:GOCLAW_OPEN_PANEL_ON_READY='$openPanelOnReady'; Set-Location '$electronDir'; npx electron src/main.js"
   Start-DetachedPowerShell -Title "GoClaw - Electron" -Command $electronCmd
 }
 
