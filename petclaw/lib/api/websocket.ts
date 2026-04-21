@@ -15,7 +15,6 @@ const CHAT_ACTION = "chat"
 
 const PUSH_TYPE_AI_CHAT = "ai_chat"
 const PUSH_TYPE_AUDIO = "audio"
-const PUSH_TYPE_AUDIO_AND_VOICE = "audio_and_voice"
 const PUSH_TYPE_EMOTION_CHANGE = "emotion_change"
 const PUSH_TYPE_ACTION_TRIGGER = "action_trigger"
 
@@ -46,7 +45,6 @@ interface PetPush {
   type: string
   push_type: string
   data?: Record<string, unknown>
-  is_final?: boolean
   timestamp: number
 }
 
@@ -114,7 +112,6 @@ export class PicoClawWebSocket {
   private activeAssistantMessageId: string | null = null
   private activeAssistantContent = ""
   private activeAssistantTimestamp = 0
-  private activeAssistantLastChatId: number | null = null
   private openHandlers: {
     settle: () => void
     fail: (err: Error) => void
@@ -194,7 +191,6 @@ export class PicoClawWebSocket {
     this.activeAssistantMessageId = null
     this.activeAssistantContent = ""
     this.activeAssistantTimestamp = 0
-    this.activeAssistantLastChatId = null
   }
 
   private async resolveTokenAndPath(): Promise<{
@@ -430,10 +426,9 @@ export class PicoClawWebSocket {
 
     switch (push.push_type) {
       case PUSH_TYPE_AI_CHAT:
-        this.handleAIChatPush(data, Boolean(push.is_final))
+        this.handleAIChatPush(data)
         break
       case PUSH_TYPE_AUDIO:
-      case PUSH_TYPE_AUDIO_AND_VOICE:
         this.handleAudioPush(data)
         break
       case PUSH_TYPE_EMOTION_CHANGE:
@@ -447,45 +442,15 @@ export class PicoClawWebSocket {
     }
   }
 
-  private mergeAssistantFinalContent(
-    streamContent: string,
-    finalChunk: string,
-  ): string {
-    if (!finalChunk) {
-      return streamContent
-    }
-    if (!streamContent) {
-      return finalChunk
-    }
-    if (finalChunk === streamContent) {
-      return streamContent
-    }
-    if (streamContent.endsWith(finalChunk)) {
-      return streamContent
-    }
-    if (finalChunk.startsWith(streamContent)) {
-      return finalChunk
-    }
-    if (streamContent.startsWith(finalChunk)) {
-      return streamContent
-    }
-    return `${streamContent}${finalChunk}`
-  }
-
-  private handleAIChatPush(data: unknown, forcedFinal = false): void {
+  private handleAIChatPush(data: unknown): void {
     const timestamp = Date.now()
     let contentType = "text"
     let text = ""
-    let chatId: number | null = null
 
     if (typeof data === "string") {
       try {
         const parsed = JSON.parse(data) as Record<string, unknown>
         contentType = (parsed.type as string) || "text"
-        const parsedChatId = Number(parsed.chat_id ?? parsed.chatId)
-        if (Number.isFinite(parsedChatId)) {
-          chatId = parsedChatId
-        }
         text =
           (parsed.text as string) ||
           (parsed.Text as string) ||
@@ -500,10 +465,6 @@ export class PicoClawWebSocket {
         (payload.type as string) ||
         (payload.ContentType as string) ||
         "text"
-      const parsedChatId = Number(payload.chat_id ?? payload.chatId)
-      if (Number.isFinite(parsedChatId)) {
-        chatId = parsedChatId
-      }
       text =
         (payload.text as string) ||
         (payload.Text as string) ||
@@ -530,9 +491,7 @@ export class PicoClawWebSocket {
       return
     }
 
-    const isFinal = forcedFinal || contentType === "final"
-
-    if ((contentType === "text" || contentType === "") && !isFinal) {
+    if (contentType === "text" || contentType === "") {
       if (!text) {
         return
       }
@@ -540,16 +499,6 @@ export class PicoClawWebSocket {
         this.activeAssistantMessageId = `assistant-${timestamp}`
         this.activeAssistantContent = ""
         this.activeAssistantTimestamp = timestamp
-      }
-
-      if (chatId !== null) {
-        if (
-          this.activeAssistantLastChatId !== null &&
-          chatId <= this.activeAssistantLastChatId
-        ) {
-          return
-        }
-        this.activeAssistantLastChatId = chatId
       }
 
       this.activeAssistantContent += text
@@ -566,19 +515,17 @@ export class PicoClawWebSocket {
       return
     }
 
-    if (isFinal) {
-      if (chatId !== null) {
-        if (
-          this.activeAssistantLastChatId !== null &&
-          chatId < this.activeAssistantLastChatId
-        ) {
-          return
+    if (contentType === "final") {
+      if (text) {
+        if (!this.activeAssistantMessageId) {
+          this.activeAssistantMessageId = `assistant-${timestamp}`
+          this.activeAssistantTimestamp = timestamp
         }
-        this.activeAssistantLastChatId = chatId
+        this.activeAssistantContent += text
       }
 
       const finalContent = normalizeIncomingText(
-        this.mergeAssistantFinalContent(this.activeAssistantContent, text),
+        this.activeAssistantContent || text,
       )
       if (!finalContent) {
         this.emit({ type: "typing", data: "false" })
