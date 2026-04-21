@@ -695,7 +695,6 @@ if ($NoTerminalWindows -and -not $electronRunning) {
   Start-Sleep -Milliseconds 800
   $electronRunning = $true
 }
-
 if ((Test-HttpReady -Url $DashboardUrl -TimeoutSeconds 2) -or (Test-PortListening -Port 3000)) {
   Write-Step "Petclaw dashboard already running at $DashboardUrl"
 } else {
