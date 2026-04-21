@@ -1,10 +1,5 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // 输出静态文件到 out 目录（用于打包）
-  output: 'export',
-  // 可选：自定义输出目录
-  // distDir: 'out',
-  
   typescript: {
     ignoreBuildErrors: true,
   },
