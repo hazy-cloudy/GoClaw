@@ -338,3 +338,147 @@ Current `petclaw` session behavior:
 4. DevTools shows `ws://127.0.0.1:18790/pet/ws?...session_id=...`
 5. if there is text but no voice, check whether `push_type=audio` was actually sent
 6. if long replies appear missing, inspect the raw `ai_chat` payload shape in WS frames
+
+---
+
+## Skills Marketplace API
+
+Base URL: `http://127.0.0.1:18800`
+
+### `GET /api/skills`
+
+List installed skills from builtin/global/workspace sources.
+
+```json
+{
+  "skills": [
+    {
+      "name": "github",
+      "path": "D:/workspace/skills/github/SKILL.md",
+      "source": "workspace",
+      "description": "GitHub integration",
+      "origin_kind": "third_party",
+      "registry_name": "clawhub",
+      "registry_url": "https://clawhub.ai/skills/github",
+      "installed_version": "1.2.3",
+      "installed_at": 1770000000000
+    }
+  ]
+}
+```
+
+Notes:
+
+- `source`: `builtin | global | workspace`
+- `origin_kind`: `builtin | manual | third_party`
+
+### `GET /api/skills/{name}`
+
+Return detail for one skill. Response fields are the same as list item plus:
+
+- `content` (the markdown body with frontmatter stripped)
+
+### `GET /api/skills/search`
+
+Search registry-backed market skills.
+
+Query params:
+
+- `q` (optional string; empty returns empty result list)
+- `limit` (optional int, default `20`, valid range `1..50`)
+- `offset` (optional int, default `0`)
+
+Example:
+
+`/api/skills/search?q=github&limit=20&offset=0`
+
+```json
+{
+  "results": [
+    {
+      "score": 0.95,
+      "slug": "github",
+      "display_name": "GitHub",
+      "summary": "GitHub integration skill",
+      "version": "1.2.3",
+      "registry_name": "clawhub",
+      "url": "https://clawhub.ai/skills/github",
+      "installed": true,
+      "installed_name": "github"
+    }
+  ],
+  "limit": 20,
+  "offset": 0,
+  "next_offset": 20,
+  "has_more": true
+}
+```
+
+### `POST /api/skills/install`
+
+Install a skill from a registry.
+
+Request JSON:
+
+```json
+{
+  "slug": "github",
+  "registry": "clawhub",
+  "version": "1.2.3",
+  "force": false
+}
+```
+
+Response JSON:
+
+```json
+{
+  "status": "ok",
+  "slug": "github",
+  "registry": "clawhub",
+  "version": "1.2.3",
+  "summary": "GitHub integration skill",
+  "is_suspicious": false,
+  "skill": {
+    "name": "github",
+    "path": "D:/workspace/skills/github/SKILL.md",
+    "source": "workspace",
+    "description": "GitHub integration skill",
+    "origin_kind": "third_party",
+    "registry_name": "clawhub",
+    "registry_url": "https://clawhub.ai/skills/github",
+    "installed_version": "1.2.3",
+    "installed_at": 1770000000000
+  }
+}
+```
+
+### `POST /api/skills/import`
+
+Import local skill file.
+
+- Content-Type: `multipart/form-data`
+- Form field: `file`
+- Accepted: `.md` / `.zip`
+- Current size limit: `1MB`
+
+Response: imported skill object (same shape as `skill` in install response).
+
+### `DELETE /api/skills/{name}`
+
+Delete one installed skill by name.
+
+```json
+{
+  "status": "ok"
+}
+```
+
+Only workspace skills can be deleted.
+
+### Skills API Error Notes
+
+- `400`: invalid request or related skills tools disabled
+- `404`: skill not found
+- `409`: import/install target already exists
+- `502`: upstream registry call failed
