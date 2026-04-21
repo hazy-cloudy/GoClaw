@@ -26,12 +26,10 @@ async function request<T>(
   options: RequestInit = {}
 ): Promise<T> {
   const url = `${getApiBaseUrl()}${endpoint}`
-
-  const isFormDataBody =
-    typeof FormData !== 'undefined' && options.body instanceof FormData
-  const defaultHeaders: HeadersInit = isFormDataBody
-    ? {}
-    : { 'Content-Type': 'application/json' }
+  
+  const defaultHeaders: HeadersInit = {
+    'Content-Type': 'application/json',
+  }
 
   const config: RequestInit = {
     ...options,
@@ -284,73 +282,31 @@ export const channelsApi = {
 
 // 技能 API
 export interface Skill {
+  id: string
   name: string
-  path: string
   description: string
   source: 'builtin' | 'global' | 'workspace'
-  origin_kind?: 'builtin' | 'manual' | 'third_party' | string
-  registry_name?: string
-  registry_url?: string
-  installed_version?: string
-  installed_at?: number
-}
-
-export interface SkillSearchResult {
-  score: number
-  slug: string
-  display_name: string
-  summary: string
-  version: string
-  registry_name: string
-  url?: string
-  installed: boolean
-  installed_name?: string
-}
-
-export interface SkillSearchResponse {
-  results: SkillSearchResult[]
-  limit: number
-  offset: number
-  next_offset?: number
-  has_more: boolean
+  category?: string
+  enabled: boolean
 }
 
 export const skillsApi = {
   list: () => request<{ skills: Skill[] }>(API_ENDPOINTS.SKILLS.LIST),
 
-  search: (query: string, limit = 20, offset = 0) => {
-    const params = new URLSearchParams({
-      q: query,
-      limit: String(limit),
-      offset: String(offset),
-    })
-    return request<SkillSearchResponse>(
-      `${API_ENDPOINTS.SKILLS.SEARCH}?${params.toString()}`
-    )
-  },
+  builtin: () => request<{ skills: Skill[] }>(API_ENDPOINTS.SKILLS.BUILTIN),
 
-  install: (input: {
-    slug: string
-    registry: string
-    version?: string
-    force?: boolean
-  }) =>
-    request<{ status: string; skill?: Skill }>(API_ENDPOINTS.SKILLS.INSTALL, {
+  global: () => request<{ skills: Skill[] }>(API_ENDPOINTS.SKILLS.GLOBAL),
+
+  workspace: () => request<{ skills: Skill[] }>(API_ENDPOINTS.SKILLS.WORKSPACE),
+
+  import: (markdown: string) =>
+    request<{ skill: Skill }>(API_ENDPOINTS.SKILLS.IMPORT, {
       method: 'POST',
-      body: JSON.stringify(input),
+      body: JSON.stringify({ markdown }),
     }),
 
-  import: (file: File) => {
-    const formData = new FormData()
-    formData.set('file', file)
-    return request<Skill>(API_ENDPOINTS.SKILLS.IMPORT, {
-      method: 'POST',
-      body: formData,
-    })
-  },
-
-  delete: (name: string) =>
-    request<{ status: string }>(API_ENDPOINTS.SKILLS.DELETE(encodeURIComponent(name)), {
+  delete: (id: string) =>
+    request<{ success: boolean }>(API_ENDPOINTS.SKILLS.DELETE(id), {
       method: 'DELETE',
     }),
 }
