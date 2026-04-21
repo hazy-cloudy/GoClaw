@@ -50,6 +50,10 @@ interface AudioPushData {
   chat_id?: number
   type?: string
   text?: string
+  audio?: string
+  duration?: number
+  seq?: number
+  error?: string
   is_final?: boolean
 }
 
@@ -187,6 +191,30 @@ function decodeBase64Chunk(value: string): Uint8Array | null {
     console.warn("[petclaw] dropped malformed audio chunk", error)
     return null
   }
+}
+
+function isLikelyBase64Audio(value: string): boolean {
+  const normalized = value.replace(/^data:audio\/[^;]+;base64,/, "").replace(/\s+/g, "")
+  if (normalized.length < 64) {
+    return false
+  }
+  if (normalized.length % 4 !== 0) {
+    return false
+  }
+  return /^[A-Za-z0-9+/=]+$/.test(normalized)
+}
+
+function resolveAudioChunkPayload(data: AudioPushData): string {
+  if (typeof data.audio === "string" && data.audio.trim()) {
+    return data.audio
+  }
+  if (data.type === "audio" && typeof data.text === "string") {
+    return data.text
+  }
+  if (typeof data.text === "string" && isLikelyBase64Audio(data.text)) {
+    return data.text
+  }
+  return ""
 }
 
 function mergeAudioChunks(chunks: Uint8Array[]): Uint8Array {
@@ -448,14 +476,14 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
             break
           }
 
-          if (data.type === "error") {
+          if (data.type === "error" || data.error) {
             audioStreamRef.current = { chatId: null, chunks: [] }
             break
           }
 
-          const hasExplicitChatId =
-            typeof data.chat_id === "number" && Number.isFinite(data.chat_id)
-          const incomingChatId = hasExplicitChatId ? data.chat_id ?? null : null
+          const parsedChatId = Number(data.chat_id)
+          const hasExplicitChatId = Number.isFinite(parsedChatId)
+          const incomingChatId = hasExplicitChatId ? parsedChatId : null
 
           let currentStream = audioStreamRef.current
           if (hasExplicitChatId) {
@@ -474,8 +502,9 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
             }
           }
 
-          if (data.text) {
-            const chunkBytes = decodeBase64Chunk(data.text)
+          const audioChunkPayload = resolveAudioChunkPayload(data)
+          if (audioChunkPayload) {
+            const chunkBytes = decodeBase64Chunk(audioChunkPayload)
             if (chunkBytes === null) {
               audioStreamRef.current = { chatId: null, chunks: [] }
               break
