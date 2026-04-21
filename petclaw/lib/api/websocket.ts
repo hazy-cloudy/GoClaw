@@ -434,7 +434,7 @@ export class PicoClawWebSocket {
         break
       case PUSH_TYPE_AUDIO:
       case PUSH_TYPE_AUDIO_AND_VOICE:
-        this.handleAudioPush(data)
+        this.handleAudioPush(data, Boolean(push.is_final))
         break
       case PUSH_TYPE_EMOTION_CHANGE:
         this.handleEmotionChangePush(data)
@@ -605,18 +605,30 @@ export class PicoClawWebSocket {
     }
   }
 
-  private handleAudioPush(data: unknown): void {
+  private handleAudioPush(data: unknown, forcedFinal = false): void {
     if (typeof data === "string") {
       try {
-        this.emit({ type: "audio", data: JSON.parse(data) as Record<string, unknown> })
+        const payload = JSON.parse(data) as Record<string, unknown>
+        if (forcedFinal && payload.is_final === undefined) {
+          payload.is_final = true
+        }
+        this.emit({ type: "audio", data: payload })
         return
       } catch {
-        this.emit({ type: "audio", data: { text: data } })
+        const payload: Record<string, unknown> = { text: data }
+        if (forcedFinal) {
+          payload.is_final = true
+        }
+        this.emit({ type: "audio", data: payload })
         return
       }
     }
 
-    this.emit({ type: "audio", data: (data || {}) as Record<string, unknown> })
+    const payload = { ...((data || {}) as Record<string, unknown>) }
+    if (forcedFinal && payload.is_final === undefined) {
+      payload.is_final = true
+    }
+    this.emit({ type: "audio", data: payload })
   }
 
   private handleEmotionChangePush(data: Record<string, unknown>): void {
