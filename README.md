@@ -25,7 +25,7 @@ Current expected relationships:
 Use the full local dev script from the repo root:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run-goclaw-dev.ps1 -Restart -PetclawMode dev
+powershell -ExecutionPolicy Bypass -File .\scripts\run-goclaw-dev.ps1 -Restart -PetclawMode dev -NoTerminalWindows
 ```
 
 This script will:
@@ -50,7 +50,7 @@ After extracting, run:
 This entry delegates to:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run-goclaw-dev.ps1 -Restart -PetclawMode dev
+powershell -ExecutionPolicy Bypass -File .\scripts\run-goclaw-dev.ps1 -Restart -PetclawMode dev -NoTerminalWindows
 ```
 
 and starts launcher, gateway, petclaw dashboard, electron frontend dev server, and Electron desktop pet in order.
@@ -135,7 +135,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-goclaw-dev.ps1 -Restart -
 ### Start full stack with production `petclaw`
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run-goclaw-dev.ps1 -Restart -PetclawMode prod
+powershell -ExecutionPolicy Bypass -File .\scripts\run-goclaw-dev.ps1 -Restart -PetclawMode prod -NoTerminalWindows
 ```
 
 ### Start launcher only
@@ -161,7 +161,7 @@ If `3000` is down and you click the desktop pet `S` button, Electron will only s
 If a dark settings page opens instead of the beige console, restart with:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run-goclaw-dev.ps1 -Restart -PetclawMode dev
+powershell -ExecutionPolicy Bypass -File .\scripts\run-goclaw-dev.ps1 -Restart -PetclawMode dev -NoTerminalWindows
 ```
 
 ### Re-run onboarding
