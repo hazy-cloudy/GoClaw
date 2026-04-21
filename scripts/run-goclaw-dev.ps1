@@ -137,25 +137,14 @@ function Start-DetachedPowerShell {
     [string]$Command
   )
 
-  if ($NoTerminalWindows) {
-    $argList = @(
-      "-NoProfile",
-      "-ExecutionPolicy", "Bypass",
-      "-Command",
-      $Command
-    )
-    Start-Process -FilePath "powershell" -WindowStyle Hidden -ArgumentList $argList | Out-Null
-    return
-  }
-
+  # 始终隐藏窗口
   $argList = @(
-    "-NoExit",
+    "-NoProfile",
     "-ExecutionPolicy", "Bypass",
     "-Command",
-    "`$Host.UI.RawUI.WindowTitle='$Title'; $Command"
+    $Command
   )
-
-  Start-Process -FilePath "powershell" -ArgumentList $argList | Out-Null
+  Start-Process -FilePath "powershell" -WindowStyle Hidden -ArgumentList $argList | Out-Null
 }
 
 function Invoke-Npm {
@@ -740,7 +729,7 @@ if ($existingElectron.Count -gt 0) {
   Write-Step "Electron desktop pet already running."
 } else {
   Write-Step "Starting electron desktop pet process..."
-  $electronCmd = "`$env:GOCLAW_DASHBOARD_URL='$escapedDashboard'; `$env:GOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:GOCLAW_OPEN_PANEL_ON_READY='$openPanelOnReady'; Set-Location '$electronDir'; npx electron src/main.js"
+  $electronCmd = "`$env:GOCLAW_DASHBOARD_URL='$escapedDashboard'; `$env:GOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:GOCLAW_SHOW_STARTUP='1'; `$env:GOCLAW_OPEN_PANEL_ON_READY='$openPanelOnReady'; Set-Location '$electronDir'; npx electron src/main.js"
   Start-DetachedPowerShell -Title "GoClaw - Electron" -Command $electronCmd
 }
 

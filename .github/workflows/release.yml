@@ -133,6 +133,38 @@ jobs:
                 ./web/backend
           fi
 
+      - name: Build petclaw frontend (Windows only)
+        if: matrix.goos == 'windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          cd petclaw
+          pnpm install --no-frozen-lockfile
+          pnpm build
+          # 验证构建产物
+          if [ ! -d "out" ]; then
+            echo "Error: petclaw build did not produce 'out' directory"
+            exit 1
+          fi
+          echo "Petclaw frontend built successfully"
+
+      - name: Build electron-frontend (Windows only)
+        if: matrix.goos == 'windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          cd electron-frontend
+          pnpm install --no-frozen-lockfile
+          pnpm build
+          # 验证构建产物
+          if [ ! -d "dist" ]; then
+            echo "Error: electron-frontend build did not produce 'dist' directory"
+            exit 1
+          fi
+          echo "Electron frontend built successfully"
+
       - name: Package
         shell: bash
         run: |
@@ -172,8 +204,35 @@ jobs:
             cp -f ../GoClaw-OneClickStart.bat allinone/GoClaw-OneClickStart.bat
             cp -f ../GoClaw-OneClickStart.ps1 allinone/GoClaw-OneClickStart.ps1
             cp -f ../scripts/run-goclaw-dev.ps1 allinone/scripts/run-goclaw-dev.ps1
-            cp -r ../petclaw allinone/petclaw
-            cp -r ../electron-frontend allinone/electron-frontend
+            
+            # 只打包构建后的前端产物，不包含 node_modules 和源码
+            # Petclaw 构建产物（静态文件）
+            if [ -d ../petclaw/out ]; then
+              mkdir -p allinone/petclaw
+              cp -r ../petclaw/out allinone/petclaw/out
+              # 只复制必要的配置文件
+              cp ../petclaw/package.json allinone/petclaw/package.json
+              if [ -f ../petclaw/next.config.mjs ]; then
+                cp ../petclaw/next.config.mjs allinone/petclaw/next.config.mjs
+              fi
+              echo "Included petclaw build output"
+            fi
+            
+            # Electron 构建产物
+            if [ -d ../electron-frontend/dist ]; then
+              mkdir -p allinone/electron-frontend
+              cp -r ../electron-frontend/dist allinone/electron-frontend/dist
+              # 只复制必要的配置文件
+              cp ../electron-frontend/package.json allinone/electron-frontend/package.json
+              if [ -f ../electron-frontend/vite.config.ts ]; then
+                cp ../electron-frontend/vite.config.ts allinone/electron-frontend/vite.config.ts
+              fi
+              if [ -f ../electron-frontend/index.html ]; then
+                cp ../electron-frontend/index.html allinone/electron-frontend/index.html
+              fi
+              echo "Included electron-frontend build output"
+            fi
+            
             (
               cd allinone
               zip -r "../${ALL_BASE}.zip" .
