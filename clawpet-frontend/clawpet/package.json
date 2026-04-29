@@ -43,7 +43,6 @@
           "target": "portable"
         }
       ],
-      "icon": "public/icon.ico",
       "signAndEditExecutable": false
     },
     "nsis": {
