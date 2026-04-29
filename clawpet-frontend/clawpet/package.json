@@ -37,25 +37,11 @@
     "win": {
       "target": [
         {
-          "target": "nsis"
-        },
-        {
-          "target": "portable"
+          "target": "zip"
         }
       ],
       "signAndEditExecutable": false
     },
-    "nsis": {
-      "oneClick": false,
-      "perMachine": true,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "ClawPet"
-    },
-    "portable": {
-      "artifactName": "ClawPet.exe"
-    }
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
