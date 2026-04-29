@@ -103,12 +103,36 @@ jobs:
       - name: Prepare onboard workspace
         shell: bash
         run: |
-          # Create root workspace directory for go:generate
-          # The onboard/workspace already has default templates, but go:generate expects root workspace
-          mkdir -p workspace
-          # Copy default templates to root workspace so go:generate can work
-          cp -r cmd/picoclaw/internal/onboard/workspace/* workspace/
-          # Run go generate to sync workspace to onboard directory
+          # Create root workspace directory with default templates
+          # These files will be copied to onboard/workspace by go:generate
+          mkdir -p workspace/memory workspace/skills
+          
+          # Create default template files
+          cat > workspace/AGENT.md << 'EOF'
+          # Agent Instructions
+          
+          You are a helpful AI assistant.
+          EOF
+          
+          cat > workspace/SOUL.md << 'EOF'
+          # Soul
+          
+          Your personality and behavior guidelines.
+          EOF
+          
+          cat > workspace/USER.md << 'EOF'
+          # User Information
+          
+          Information about the user.
+          EOF
+          
+          cat > workspace/memory/MEMORY.md << 'EOF'
+          # Memory
+          
+          Long-term memory storage.
+          EOF
+          
+          # Run go generate to copy workspace to onboard directory
           go generate ./cmd/picoclaw/internal/onboard
 
       - name: Build
