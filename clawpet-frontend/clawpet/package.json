@@ -20,11 +20,11 @@
     "files": [
       "**/*",
       ".next/**/*",
-      "electron/**/*",
-      "!node_modules",
-      "!out"
+      "node_modules/**/*",
+      "electron/**/*"
     ],
-    "asar": false,
+    "asar": true,
+    "asarUnpack": ["**/*.node", "picoclaw.exe", "picoclaw-web.exe"],
     "extraResources": [
       {
         "from": "picoclaw.exe",
