@@ -1,10 +1,13 @@
 import {
+  API_ENDPOINTS,
   DIRECT_PICO_TOKEN_PATH,
   DIRECT_PICO_WS_PATH,
   DIRECT_PET_TOKEN_PATH,
   DIRECT_PET_WS_PATH,
+  getApiBaseUrl,
   getDirectGatewayBaseUrl,
   isDirectGatewayEnabled,
+  withLauncherAuthRequest,
 } from "./config"
 
 const CHAT_ACTION = "chat"
@@ -107,6 +110,7 @@ interface TokenCandidate {
   baseUrl: string
   tokenPath: string
   wsPath: string
+  authMode: "launcher" | "direct"
 }
 
 type WSEventData = ChatMessage | string | Record<string, unknown>
@@ -234,6 +238,24 @@ export class PicoClawWebSocket {
     mode: WSMode
   }> {
     const candidates: TokenCandidate[] = []
+    const launcherBase = getApiBaseUrl().trim()
+    if (launcherBase) {
+      candidates.push(
+        {
+          baseUrl: launcherBase,
+          tokenPath: API_ENDPOINTS.PET.TOKEN,
+          wsPath: DIRECT_PET_WS_PATH,
+          authMode: "launcher",
+        },
+        {
+          baseUrl: launcherBase,
+          tokenPath: API_ENDPOINTS.PICO.TOKEN,
+          wsPath: DIRECT_PICO_WS_PATH,
+          authMode: "launcher",
+        },
+      )
+    }
+
     const directGatewayBase = getDirectGatewayBaseUrl()
     if (isDirectGatewayEnabled() && directGatewayBase) {
       candidates.push(
@@ -241,11 +263,13 @@ export class PicoClawWebSocket {
           baseUrl: directGatewayBase,
           tokenPath: DIRECT_PET_TOKEN_PATH,
           wsPath: DIRECT_PET_WS_PATH,
+          authMode: "direct",
         },
         {
           baseUrl: directGatewayBase,
           tokenPath: DIRECT_PICO_TOKEN_PATH,
           wsPath: DIRECT_PICO_WS_PATH,
+          authMode: "direct",
         },
       )
     }
@@ -253,10 +277,12 @@ export class PicoClawWebSocket {
     let lastError = "PET channel not available"
 
     for (const candidate of candidates) {
-      const res = await fetch(`${candidate.baseUrl}${candidate.tokenPath}`, {
-        method: "GET",
-        credentials: "omit",
-      }).catch(() => null)
+      const endpoint = `${candidate.baseUrl}${candidate.tokenPath}`
+      const requestInit: RequestInit =
+        candidate.authMode === "launcher"
+          ? withLauncherAuthRequest(endpoint, { method: "GET" })
+          : { method: "GET", credentials: "omit" }
+      const res = await fetch(endpoint, requestInit).catch(() => null)
 
       if (!res) {
         lastError = `Token endpoint failed (${candidate.tokenPath}): network error`

@@ -169,7 +169,8 @@ const backendBaseUrl = (process.env.GOCLAW_BACKEND_URL || 'http://127.0.0.1:1879
 const launcherBaseUrl = (process.env.GOCLAW_LAUNCHER_URL || 'http://127.0.0.1:18800').trim().replace(/\/+$/, '');
 const rendererBaseUrl = (process.env.ELECTRON_RENDERER_URL || 'http://localhost:5173').trim().replace(/\/+$/, '');
 const dashboardBaseUrl = (process.env.GOCLAW_DASHBOARD_URL || 'http://127.0.0.1:3000').trim().replace(/\/+$/, '');
-const launcherToken = (process.env.GOCLAW_LAUNCHER_TOKEN || process.env.PICOCLAW_LAUNCHER_TOKEN || '').trim();
+const embeddedLauncherTokenDefault = 'goclaw-local-token';
+let launcherToken = (process.env.GOCLAW_LAUNCHER_TOKEN || process.env.PICOCLAW_LAUNCHER_TOKEN || '').trim();
 const configuredRendererPath = (process.env.GOCLAW_PET_RENDERER_PATH || '/desktop-pet').trim();
 const shouldOpenDevTools = process.env.ELECTRON_OPEN_DEVTOOLS === '1';  // 是否打开开发者工具
 const startupMode = process.env.GOCLAW_SHOW_STARTUP !== '0';  // 默认显示启动进度窗口（除非明确设置为0）
@@ -1280,6 +1281,12 @@ function startLauncher(exePath, workDir) {
     
     const configPath = path.join(configDir, 'config.json');
     
+    if (!launcherToken) {
+      launcherToken = embeddedLauncherTokenDefault;
+    }
+    process.env.GOCLAW_LAUNCHER_TOKEN = launcherToken;
+    process.env.PICOCLAW_LAUNCHER_TOKEN = launcherToken;
+
     launcherProcess = spawn(exePath, [
       '-port', '18800',
       '-no-browser',
@@ -1290,7 +1297,8 @@ function startLauncher(exePath, workDir) {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: {
         ...process.env,
-        PICOCLAW_LAUNCHER_TOKEN: 'goclaw-local-token',
+        PICOCLAW_LAUNCHER_TOKEN: launcherToken,
+        GOCLAW_LAUNCHER_TOKEN: launcherToken,
         PICOCLAW_HOME: configDir,
         PICOCLAW_CONFIG: configPath
       }
