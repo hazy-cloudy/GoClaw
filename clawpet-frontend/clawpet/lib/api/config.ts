@@ -70,7 +70,14 @@ export function getApiBaseUrl(): string {
     }
   }
 
+  // In Electron, always prefer electronAPI even if running on port 3000
+  // (Next.js dev server). Only fall back to LOCAL_DEFAULT_ORIGIN for
+  // pure browser environments.
   if (typeof window !== 'undefined' && window.location?.origin) {
+    // Check if running in Electron
+    if (window.electronAPI) {
+      return LOCAL_DIRECT_GATEWAY_ORIGIN // 18790
+    }
     const port = window.location.port
     if (port === '3000' || port === '3001') {
       return LOCAL_DEFAULT_ORIGIN

@@ -157,6 +157,7 @@ func NewPetChannel(cfg config.PetConfig, msgBus *bus.MessageBus, workspacePath s
 			CheckOrigin:     checkOrigin,
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
+			Subprotocols:    []string{""}, // Accept any subprotocol (e.g., token.xxx) from client
 		},
 		connections: make(map[string]*petConn),
 		ctx:         ctx,
