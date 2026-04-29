@@ -14,23 +14,42 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
 # Step 1: 编译 Go 后端
-Write-Host "[1/4] 编译 Gateway 后端..." -ForegroundColor Yellow
+Write-Host "[1/5] 编译 Gateway 后端..." -ForegroundColor Yellow
 Set-Location $ProjectRoot
 go build -tags "goolm,stdjson" -o "$DistDir\picoclaw.exe" ./cmd/picoclaw
 Write-Host "  ✅ Gateway 编译完成" -ForegroundColor Green
 
-Write-Host "[2/4] 编译 Launcher 后端..." -ForegroundColor Yellow
+Write-Host "[2/5] 编译 Launcher 后端..." -ForegroundColor Yellow
 go build -tags "goolm,stdjson" -o "$DistDir\picoclaw-web.exe" ./web/backend
 Write-Host "  ✅ Launcher 编译完成" -ForegroundColor Green
 
 # Step 2: 复制到 Electron 项目目录
-Write-Host "[3/4] 复制后端二进制到 Electron 项目..." -ForegroundColor Yellow
+Write-Host "[3/5] 复制后端二进制到 Electron 项目..." -ForegroundColor Yellow
 Copy-Item "$DistDir\picoclaw.exe" "$ClawpetDir\picoclaw.exe" -Force
 Copy-Item "$DistDir\picoclaw-web.exe" "$ClawpetDir\picoclaw-web.exe" -Force
 Write-Host "  ✅ 复制完成" -ForegroundColor Green
 
-# Step 3: Electron 打包
-Write-Host "[4/4] 打包 Electron 应用..." -ForegroundColor Yellow
+# Step 3: 构建 Next.js 前端
+Write-Host "[4/5] 构建 Next.js 前端..." -ForegroundColor Yellow
+Set-Location $ClawpetDir
+
+# 安装依赖（如果 node_modules 不存在）
+if (-not (Test-Path "node_modules")) {
+    Write-Host "  安装依赖..." -ForegroundColor Gray
+    npm install
+}
+
+# 构建 Next.js
+if (Test-Path ".next") {
+    Write-Host "  清理旧的构建..." -ForegroundColor Gray
+    Remove-Item -Path ".next" -Recurse -Force
+}
+
+npm run build
+Write-Host "  ✅ Next.js 构建完成" -ForegroundColor Green
+
+# Step 4: Electron 打包
+Write-Host "[5/5] 打包 Electron 应用..." -ForegroundColor Yellow
 Set-Location $ClawpetDir
 
 # 清理旧的打包
