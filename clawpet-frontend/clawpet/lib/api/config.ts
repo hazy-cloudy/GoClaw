@@ -1,4 +1,4 @@
-const LOCAL_DEFAULT_ORIGIN = 'http://127.0.0.1:18790'
+const LOCAL_DEFAULT_ORIGIN = 'http://127.0.0.1:18800'
 const DIRECT_GATEWAY_ENV_ORIGIN = process.env.NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL || ''
 const LOCAL_DIRECT_GATEWAY_ORIGIN = 'http://127.0.0.1:18790'
 const DIRECT_GATEWAY_CACHE_KEY = 'petclaw.directGatewayBaseUrl'
@@ -221,7 +221,7 @@ export function getAuthRequestCredentials(input: string): RequestCredentials {
   if (!USE_CREDENTIALS) {
     return 'omit'
   }
-  if (resolveLauncherToken() && isCrossOriginRequest(input)) {
+  if (isCrossOriginRequest(input)) {
     return 'omit'
   }
   return 'include'
