@@ -20,8 +20,9 @@
     "files": [
       "**/*",
       ".next/**/*",
-      "node_modules/**/*",
-      "electron/**/*"
+      "electron/**/*",
+      "!node_modules",
+      "!out"
     ],
     "asar": false,
     "extraResources": [
