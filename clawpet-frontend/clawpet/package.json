@@ -1,13 +1,67 @@
 {
-  "name": "my-project",
+  "name": "clawpet",
   "version": "0.1.0",
   "private": true,
+  "main": "electron/main.js",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "desktop": "electron electron/main.js"
+    "desktop": "electron electron/main.js",
+    "package": "electron-builder --win --publish never"
+  },
+  "build": {
+    "appId": "com.goclaw.clawpet",
+    "productName": "ClawPet",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "**/*",
+      ".next/**/*",
+      "node_modules/**/*",
+      "electron/**/*"
+    ],
+    "asar": false,
+    "extraResources": [
+      {
+        "from": "picoclaw.exe",
+        "to": "picoclaw.exe"
+      },
+      {
+        "from": "picoclaw-web.exe",
+        "to": "picoclaw-web.exe"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "public/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "ClawPet"
+    },
+    "portable": {
+      "artifactName": "ClawPet.exe"
+    }
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
@@ -66,7 +120,8 @@
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "electron": "^28.0.0",
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3",
     "postcss": "^8.5",
     "tailwindcss": "^4.2.0",
     "tw-animate-css": "1.3.3",
