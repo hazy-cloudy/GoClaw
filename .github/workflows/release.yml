@@ -188,6 +188,9 @@ jobs:
 
       - name: Package
         shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          ELECTRON_BUILDER_ALLOW_UNRESOLVED_DEPENDENCIES: "true"
         run: |
           set -euo pipefail
           cd dist
@@ -228,10 +231,6 @@ jobs:
             
             # Build Electron app with electron-builder (pass architecture from matrix)
             cd ../clawpet-frontend/clawpet
-            
-            # Disable code signing for Windows builds on Linux
-            export CSC_IDENTITY_AUTO_DISCOVERY=false
-            export ELECTRON_BUILDER_ALLOW_UNRESOLVED_DEPENDENCIES=true
             
             if [[ "${{ matrix.file_arch }}" == "x86_64" ]]; then
               npx electron-builder --win --x64 --publish never
