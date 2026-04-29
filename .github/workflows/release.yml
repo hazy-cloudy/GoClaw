@@ -242,22 +242,15 @@ jobs:
               npx electron-builder --win --publish never
             fi
             
-            # Copy built installers to release directory
+            # Copy built zip to release directory
             cd dist
             ls -la
             
-            # Copy NSIS installer (e.g., ClawPet Setup 0.1.0.exe)
-            INSTALLER=$(ls -1 *Setup*.exe 2>/dev/null | head -1)
-            if [ -n "$INSTALLER" ]; then
-              REPO_DIST="../../../dist"; mkdir -p "${REPO_DIST}"; cp -f "$INSTALLER" "${REPO_DIST}/${APP_NAME}_Setup_${{ matrix.file_os }}_${{ matrix.file_arch }}.exe"
-              echo "鉁?NSIS installer: $INSTALLER"
-            fi
-            
-            # Copy portable executable (e.g., ClawPet 0.1.0.exe)
-            PORTABLE=$(ls -1 "${APP_NAME}"*.exe 2>/dev/null | grep -v Setup | head -1)
-            if [ -n "$PORTABLE" ]; then
-              cp -f "$PORTABLE" "${REPO_DIST}/${APP_NAME}_Portable_${{ matrix.file_os }}_${{ matrix.file_arch }}.exe"
-              echo "鉁?Portable executable: $PORTABLE"
+            # Copy zip archive
+            ZIP_FILE=$(ls -1 *.zip 2>/dev/null | head -1)
+            if [ -n "$ZIP_FILE" ]; then
+              REPO_DIST="../../../dist"; mkdir -p "${REPO_DIST}"; cp -f "$ZIP_FILE" "${REPO_DIST}/${APP_NAME}_${{ matrix.file_os }}_${{ matrix.file_arch }}.zip"
+              echo "✅ Zip archive: $ZIP_FILE"
             fi
             
             # Copy win-unpacked directory for debugging
