@@ -102,7 +102,11 @@ jobs:
 
       - name: Prepare onboard workspace
         shell: bash
-        run: go generate ./cmd/picoclaw/internal/onboard
+        run: |
+          # Create empty workspace directory if it doesn't exist
+          mkdir -p workspace
+          # Now run go generate
+          go generate ./cmd/picoclaw/internal/onboard
 
       - name: Build
         shell: bash
