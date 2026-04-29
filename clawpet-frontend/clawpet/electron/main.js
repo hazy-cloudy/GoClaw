@@ -1104,10 +1104,28 @@ app.on('before-quit', () => {
  */
 async function startBackendServices() {
   const exeDir = path.dirname(process.execPath);
-  
-  // 检查是否内嵌了后端二进制
-  const gatewayExe = path.join(exeDir, 'picoclaw.exe');
-  const launcherExe = path.join(exeDir, 'picoclaw-web.exe');
+
+  // electron-builder extraResources are placed in resources/ by default.
+  // Keep exe-dir fallback for local debug layouts.
+  const resolveEmbeddedBinary = (filename) => {
+    const candidates = [];
+    if (process.resourcesPath) {
+      candidates.push(path.join(process.resourcesPath, filename));
+    }
+    candidates.push(path.join(exeDir, filename));
+
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
+    }
+
+    // Preserve a deterministic path for logs even when missing.
+    return candidates[0];
+  };
+  // Resolve embedded backend binaries.
+  const gatewayExe = resolveEmbeddedBinary('picoclaw.exe');
+  const launcherExe = resolveEmbeddedBinary('picoclaw-web.exe');
   
   const hasGateway = fs.existsSync(gatewayExe);
   const hasLauncher = fs.existsSync(launcherExe);
