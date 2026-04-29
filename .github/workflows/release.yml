@@ -21,7 +21,7 @@ env:
   PNPM_VERSION: "9"
 
 jobs:
-  build:
+  build-linux-macos-freebsd:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -55,14 +55,6 @@ jobs:
           - goos: darwin
             goarch: arm64
             file_os: Darwin
-            file_arch: arm64
-          - goos: windows
-            goarch: amd64
-            file_os: Windows
-            file_arch: x86_64
-          - goos: windows
-            goarch: arm64
-            file_os: Windows
             file_arch: arm64
           - goos: freebsd
             goarch: amd64
@@ -178,15 +170,151 @@ jobs:
           set -euo pipefail
           cd clawpet-frontend/clawpet
           
-          # Install dependencies
-          pnpm install --no-frozen-lockfile
+          # Use npm instead of pnpm to avoid symlink issues with electron-builder
+          # pnpm uses symlinks which electron-builder cannot properly package
+          npm install
           
           # Build Next.js
-          pnpm build
+          npm run build
           
           echo "Frontend build complete"
 
       - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+
+          BASE="${APP_NAME}_${{ matrix.file_os }}_${{ matrix.file_arch }}"
+          BIN="${APP_NAME}"
+          LAUNCHER_BIN="${APP_NAME}-web"
+
+          # Linux/macOS/FreeBSD package (Gateway + Launcher + startup script)
+          printf '%s\n' \
+            '#!/usr/bin/env sh' \
+            'set -eu' \
+            'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"' \
+            'exec "$SCRIPT_DIR/clawpet" gateway "$@"' \
+            > "${BIN}-gateway"
+          chmod +x "${BIN}-gateway"
+          tar -czf "${BASE}.tar.gz" "${BIN}" "${LAUNCHER_BIN}" "${BIN}-gateway"
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goarm && format('-arm{0}', matrix.goarm) || '' }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  build-windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: windows
+            goarch: amd64
+            file_os: Windows
+            file_arch: x86_64
+          - goos: windows
+            goarch: arm64
+            file_os: Windows
+            file_arch: arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Node (for Electron app)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Prepare onboard workspace
+        shell: bash
+        run: |
+          # Create root workspace directory with default templates
+          mkdir -p workspace/memory workspace/skills
+          
+          # Create default template files
+          cat > workspace/AGENT.md << 'EOF'
+          # Agent Instructions
+          
+          You are a helpful AI assistant.
+          EOF
+          
+          cat > workspace/SOUL.md << 'EOF'
+          # Soul
+          
+          Your personality and behavior guidelines.
+          EOF
+          
+          cat > workspace/USER.md << 'EOF'
+          # User Information
+          
+          Information about the user.
+          EOF
+          
+          cat > workspace/memory/MEMORY.md << 'EOF'
+          # Memory
+          
+          Long-term memory storage.
+          EOF
+          
+          # Run go generate to copy workspace to onboard directory
+          go generate ./cmd/picoclaw/internal/onboard
+
+      - name: Build Go Binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+
+          BIN="${APP_NAME}.exe"
+          LAUNCHER_BIN="${APP_NAME}-web.exe"
+
+          VERSION="${GITHUB_REF_NAME}"
+          SHORT_SHA="${GITHUB_SHA::7}"
+          BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          # Build Gateway (picoclaw)
+          GOOS=windows GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 \
+            go build \
+              -trimpath \
+              -tags "${BUILD_TAGS}" \
+              -ldflags "-s -w -X github.com/sipeed/picoclaw/pkg/config.Version=${VERSION} -X github.com/sipeed/picoclaw/pkg/config.GitCommit=${SHORT_SHA} -X github.com/sipeed/picoclaw/pkg/config.BuildTime=${BUILD_TIME}" \
+              -o "dist/${BIN}" \
+              "${BUILD_ENTRY}"
+
+          # Build Launcher (picoclaw-web)
+          GOOS=windows GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 \
+            go build \
+              -trimpath \
+              -tags "${BUILD_TAGS}" \
+              -ldflags "-s -w" \
+              -o "dist/${LAUNCHER_BIN}" \
+              "${LAUNCHER_ENTRY}"
+
+      - name: Build ClawPet Electron App
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd clawpet-frontend/clawpet
+          
+          # Use npm instead of pnpm to avoid symlink issues with electron-builder
+          npm install
+          
+          # Build Next.js
+          npm run build
+          
+          echo "Frontend build complete"
+
+      - name: Package Windows
         shell: bash
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
@@ -198,98 +326,81 @@ jobs:
           cd dist
 
           BASE="${APP_NAME}_${{ matrix.file_os }}_${{ matrix.file_arch }}"
-          BIN="${APP_NAME}"
-          LAUNCHER_BIN="${APP_NAME}-web"
+          WIN_BIN="${APP_NAME}.exe"
+          WIN_LAUNCHER_BIN="${APP_NAME}-web.exe"
 
-          if [[ "${{ matrix.goos }}" == "windows" ]]; then
-            WIN_BIN="${BIN}.exe"
-            WIN_LAUNCHER_BIN="${LAUNCHER_BIN}.exe"
+          # Create startup script
+          printf '%s\n' \
+            '@echo off' \
+            'setlocal' \
+            'set "SELF_DIR=%~dp0"' \
+            '"%SELF_DIR%clawpet.exe" gateway %*' \
+            'set "EXIT_CODE=%ERRORLEVEL%"' \
+            '' \
+            'if "%CLAWPET_NO_PAUSE%"=="1" (' \
+            '  exit /b %EXIT_CODE%' \
+            ')' \
+            '' \
+            'echo.' \
+            'echo clawpet gateway exited with code %EXIT_CODE%.' \
+            'echo Press any key to close...' \
+            'pause >nul' \
+            'exit /b %EXIT_CODE%' \
+            > "${APP_NAME}-gateway.bat"
 
-            # Create startup script
-            printf '%s\n' \
-              '@echo off' \
-              'setlocal' \
-              'set "SELF_DIR=%~dp0"' \
-              '"%SELF_DIR%clawpet.exe" gateway %*' \
-              'set "EXIT_CODE=%ERRORLEVEL%"' \
-              '' \
-              'if "%CLAWPET_NO_PAUSE%"=="1" (' \
-              '  exit /b %EXIT_CODE%' \
-              ')' \
-              '' \
-              'echo.' \
-              'echo clawpet gateway exited with code %EXIT_CODE%.' \
-              'echo Press any key to close...' \
-              'pause >nul' \
-              'exit /b %EXIT_CODE%' \
-              > "${BIN}-gateway.bat"
+          # Standard package
+          zip "${BASE}.zip" "${WIN_BIN}" "${WIN_LAUNCHER_BIN}" "${APP_NAME}-gateway.bat"
 
-            # Standard package
-            zip "${BASE}.zip" "${WIN_BIN}" "${WIN_LAUNCHER_BIN}" "${BIN}-gateway.bat"
-
-            # Copy Go binaries to Electron project
-            cp -f "${WIN_BIN}" ../clawpet-frontend/clawpet/picoclaw.exe
-            cp -f "${WIN_LAUNCHER_BIN}" ../clawpet-frontend/clawpet/picoclaw-web.exe
-            
-            # Build Electron app with electron-builder (pass architecture from matrix)
-            cd ../clawpet-frontend/clawpet
-            
-            if [[ "${{ matrix.file_arch }}" == "x86_64" ]]; then
-              npx electron-builder --win --x64 --publish never
-            elif [[ "${{ matrix.file_arch }}" == "arm64" ]]; then
-              npx electron-builder --win --arm64 --publish never
-            else
-              npx electron-builder --win --publish never
-            fi
-            
-            # Copy built zip to release directory
-            cd dist
-            ls -la
-            
-            # Copy zip archive
-            ZIP_FILE=$(ls -1 *.zip 2>/dev/null | head -1)
-            if [ -n "$ZIP_FILE" ]; then
-              REPO_DIST="../../../dist"; mkdir -p "${REPO_DIST}"; cp -f "$ZIP_FILE" "${REPO_DIST}/${APP_NAME}_${{ matrix.file_os }}_${{ matrix.file_arch }}.zip"
-              echo "✅ Zip archive: $ZIP_FILE"
-            fi
-            
-            # Copy win-unpacked directory for debugging
-            cd ../..
-            if [ -d "clawpet-frontend/clawpet/dist/win-unpacked" ]; then
-              # Ensure backend binaries are in win-unpacked
-              cp -f "dist/${WIN_BIN}" clawpet-frontend/clawpet/dist/win-unpacked/
-              cp -f "dist/${WIN_LAUNCHER_BIN}" clawpet-frontend/clawpet/dist/win-unpacked/
-              
-              # Package win-unpacked as zip
-              cd clawpet-frontend/clawpet/dist
-              zip -r "../../dist/${APP_NAME}_win-unpacked_${{ matrix.file_os }}_${{ matrix.file_arch }}.zip" win-unpacked/
-              echo "鉁?Win-unpacked debug package created"
-            fi
+          # Copy Go binaries to Electron project
+          cp -f "${WIN_BIN}" ../clawpet-frontend/clawpet/picoclaw.exe
+          cp -f "${WIN_LAUNCHER_BIN}" ../clawpet-frontend/clawpet/picoclaw-web.exe
+          
+          # Build Electron app with electron-builder
+          cd ../clawpet-frontend/clawpet
+          
+          if [[ "${{ matrix.file_arch }}" == "x86_64" ]]; then
+            npx electron-builder --win --x64 --publish never
+          elif [[ "${{ matrix.file_arch }}" == "arm64" ]]; then
+            npx electron-builder --win --arm64 --publish never
           else
-            # Linux/macOS/FreeBSD package (Gateway + Launcher + startup script)
-            printf '%s\n' \
-              '#!/usr/bin/env sh' \
-              'set -eu' \
-              'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"' \
-              'exec "$SCRIPT_DIR/clawpet" gateway "$@"' \
-              > "${BIN}-gateway"
-            chmod +x "${BIN}-gateway"
-            tar -czf "${BASE}.tar.gz" "${BIN}" "${LAUNCHER_BIN}" "${BIN}-gateway"
+            npx electron-builder --win --publish never
+          fi
+          
+          # Copy built zip to release directory
+          cd dist
+          ls -la
+          
+          # Copy zip archive
+          ZIP_FILE=$(ls -1 *.zip 2>/dev/null | head -1)
+          if [ -n "$ZIP_FILE" ]; then
+            REPO_DIST="../../../dist"; mkdir -p "${REPO_DIST}"; cp -f "$ZIP_FILE" "${REPO_DIST}/${APP_NAME}_${{ matrix.file_os }}_${{ matrix.file_arch }}.zip"
+            echo "✅ Zip archive: $ZIP_FILE"
+          fi
+          
+          # Copy win-unpacked directory for debugging
+          cd ../..
+          if [ -d "clawpet-frontend/clawpet/dist/win-unpacked" ]; then
+            # Ensure backend binaries are in win-unpacked
+            cp -f "dist/${WIN_BIN}" clawpet-frontend/clawpet/dist/win-unpacked/
+            cp -f "dist/${WIN_LAUNCHER_BIN}" clawpet-frontend/clawpet/dist/win-unpacked/
+            
+            # Package win-unpacked as zip
+            cd clawpet-frontend/clawpet/dist
+            zip -r "../../dist/${APP_NAME}_win-unpacked_${{ matrix.file_os }}_${{ matrix.file_arch }}.zip" win-unpacked/
+            echo "✅ Win-unpacked debug package created"
           fi
 
       - name: Upload package artifact
         uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goarm && format('-arm{0}', matrix.goarm) || '' }}
+          name: release-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
-            dist/*.tar.gz
             dist/*.zip
-            dist/*.exe
           if-no-files-found: error
 
   release:
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build-linux-macos-freebsd, build-windows]
 
     steps:
       - name: Checkout

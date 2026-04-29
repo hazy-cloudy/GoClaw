@@ -213,9 +213,10 @@ function startNextServer() {
     return;
   }
 
-  // Packaged app content lives under resources/app when asar is disabled.
+  // Packaged app content lives under resources/app.asar.unpacked when asar is enabled,
+  // or under resources/app when asar is disabled.
   const appDir = process.resourcesPath
-    ? path.join(process.resourcesPath, 'app')
+    ? path.join(process.resourcesPath, 'app.asar.unpacked')
     : path.join(__dirname, '..');
   const buildDir = path.join(appDir, '.next');
   const nextCliPath = path.join(appDir, 'node_modules', 'next', 'dist', 'bin', 'next');
