@@ -190,6 +190,8 @@ jobs:
         shell: bash
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          CSC_LINK: ""
+          CSC_KEY_PASSWORD: ""
           ELECTRON_BUILDER_ALLOW_UNRESOLVED_DEPENDENCIES: "true"
         run: |
           set -euo pipefail
