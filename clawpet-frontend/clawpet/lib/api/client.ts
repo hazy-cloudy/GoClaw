@@ -29,11 +29,14 @@ async function requestWithBase<T>(
 ): Promise<T> {
   const url = `${baseUrl}${endpoint}`
 
+  const method = (options.method || 'GET').toUpperCase()
+  const hasBody = options.body !== undefined && options.body !== null
   const isFormDataBody =
     typeof FormData !== 'undefined' && options.body instanceof FormData
-  const defaultHeaders: HeadersInit = isFormDataBody
-    ? {}
-    : { 'Content-Type': 'application/json' }
+  const shouldSetJsonContentType = !isFormDataBody && hasBody && method !== 'GET' && method !== 'HEAD'
+  const defaultHeaders: HeadersInit = shouldSetJsonContentType
+    ? { 'Content-Type': 'application/json' }
+    : {}
 
   const config: RequestInit = {
     ...options,
