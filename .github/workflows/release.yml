@@ -103,9 +103,12 @@ jobs:
       - name: Prepare onboard workspace
         shell: bash
         run: |
-          # Create empty workspace directory if it doesn't exist
+          # Create root workspace directory for go:generate
+          # The onboard/workspace already has default templates, but go:generate expects root workspace
           mkdir -p workspace
-          # Now run go generate
+          # Copy default templates to root workspace so go:generate can work
+          cp -r cmd/picoclaw/internal/onboard/workspace/* workspace/
+          # Run go generate to sync workspace to onboard directory
           go generate ./cmd/picoclaw/internal/onboard
 
       - name: Build
