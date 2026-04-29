@@ -179,6 +179,26 @@ export const authApi = {
     request<{ authenticated: boolean; expires?: string }>(API_ENDPOINTS.AUTH.STATUS),
 }
 
+// Gateway management APIs should always go through Launcher (18800),
+// not directly to Gateway (18790).
+function getLauncherBaseUrl(): string {
+  if (typeof window !== 'undefined') {
+    const launcherUrl = (window as any).electronAPI?.getLauncherBaseUrl?.()
+    if (launcherUrl && launcherUrl.trim()) {
+      return launcherUrl.trim()
+    }
+  }
+  // Fallback to default launcher port
+  return 'http://127.0.0.1:18800'
+}
+
+async function requestToLauncher<T>(
+  endpoint: string,
+  options: RequestInit = {}
+): Promise<T> {
+  return requestWithBase<T>(getLauncherBaseUrl(), endpoint, options)
+}
+
 // 网关 API
 export const gatewayApi = {
   status: async (): Promise<GatewayStatus> => {
@@ -194,7 +214,8 @@ export const gatewayApi = {
       | null = null
 
     try {
-      raw = await request<{
+      // Gateway management APIs must go through Launcher (18800)
+      raw = await requestToLauncher<{
         gateway_status?: 'stopped' | 'starting' | 'running' | 'stopping' | 'restarting' | 'error'
         pid?: number
         gateway_base_url?: string

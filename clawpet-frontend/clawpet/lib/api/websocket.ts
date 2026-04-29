@@ -238,24 +238,8 @@ export class PicoClawWebSocket {
     mode: WSMode
   }> {
     const candidates: TokenCandidate[] = []
-    const launcherBase = getApiBaseUrl().trim()
-    if (launcherBase) {
-      candidates.push(
-        {
-          baseUrl: launcherBase,
-          tokenPath: API_ENDPOINTS.PET.TOKEN,
-          wsPath: DIRECT_PET_WS_PATH,
-          authMode: "launcher",
-        },
-        {
-          baseUrl: launcherBase,
-          tokenPath: API_ENDPOINTS.PICO.TOKEN,
-          wsPath: DIRECT_PICO_WS_PATH,
-          authMode: "launcher",
-        },
-      )
-    }
 
+    // Priority 1: Direct Gateway (18790) - always try first
     const directGatewayBase = getDirectGatewayBaseUrl()
     if (isDirectGatewayEnabled() && directGatewayBase) {
       candidates.push(
@@ -270,6 +254,25 @@ export class PicoClawWebSocket {
           tokenPath: DIRECT_PICO_TOKEN_PATH,
           wsPath: DIRECT_PICO_WS_PATH,
           authMode: "direct",
+        },
+      )
+    }
+
+    // Priority 2: Launcher (18800) - fallback only
+    const launcherBase = getApiBaseUrl().trim()
+    if (launcherBase && launcherBase !== directGatewayBase) {
+      candidates.push(
+        {
+          baseUrl: launcherBase,
+          tokenPath: API_ENDPOINTS.PET.TOKEN,
+          wsPath: DIRECT_PET_WS_PATH,
+          authMode: "launcher",
+        },
+        {
+          baseUrl: launcherBase,
+          tokenPath: API_ENDPOINTS.PICO.TOKEN,
+          wsPath: DIRECT_PICO_WS_PATH,
+          authMode: "launcher",
         },
       )
     }
