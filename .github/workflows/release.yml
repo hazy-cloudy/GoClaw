@@ -82,20 +82,17 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Setup Node (Windows launcher build)
-        if: matrix.goos == 'windows'
+      - name: Setup Node (for launcher frontend build)
         uses: actions/setup-node@v4
         with:
           node-version: "22"
 
       - name: Setup pnpm
-        if: matrix.goos == 'windows'
         uses: pnpm/action-setup@v4
         with:
           version: ${{ env.PNPM_VERSION }}
 
-      - name: Build launcher embedded frontend (Windows)
-        if: matrix.goos == 'windows'
+      - name: Build launcher embedded frontend
         shell: bash
         run: |
           set -euo pipefail
@@ -134,16 +131,14 @@ jobs:
               -o "dist/${BIN}" \
               "${BUILD_ENTRY}"
 
-          # Build Launcher (picoclaw-web)
-          if [[ "${{ matrix.goos }}" == "windows" ]]; then
-            GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} GOARM="${GOARM}" CGO_ENABLED=0 \
-              go build \
-                -trimpath \
-                -tags "${BUILD_TAGS}" \
-                -ldflags "-s -w" \
-                -o "dist/${LAUNCHER_BIN}" \
-                "${LAUNCHER_ENTRY}"
-          fi
+          # Build Launcher (picoclaw-web) - built for all platforms (embeds frontend via pnpm build:backend)
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} GOARM="${GOARM}" CGO_ENABLED=0 \
+            go build \
+              -trimpath \
+              -tags "${BUILD_TAGS}" \
+              -ldflags "-s -w" \
+              -o "dist/${LAUNCHER_BIN}" \
+              "${LAUNCHER_ENTRY}"
 
       - name: Build ClawPet Electron App (Windows)
         if: matrix.goos == 'windows'
@@ -171,12 +166,15 @@ jobs:
           LAUNCHER_BIN="${APP_NAME}-web"
 
           if [[ "${{ matrix.goos }}" == "windows" ]]; then
+            WIN_BIN="${BIN}.exe"
+            WIN_LAUNCHER_BIN="${LAUNCHER_BIN}.exe"
+
             # Create startup script
             printf '%s\n' \
               '@echo off' \
               'setlocal' \
               'set "SELF_DIR=%~dp0"' \
-              '"%SELF_DIR%clawpet-gateway.bat" %*' \
+              '"%SELF_DIR%clawpet.exe" gateway %*' \
               'set "EXIT_CODE=%ERRORLEVEL%"' \
               '' \
               'if "%CLAWPET_NO_PAUSE%"=="1" (' \
@@ -191,11 +189,11 @@ jobs:
               > "${BIN}-gateway.bat"
 
             # Standard package
-            zip "${BASE}.zip" "${BIN}.exe" "${LAUNCHER_BIN}" "${BIN}-gateway.bat"
+            zip "${BASE}.zip" "${WIN_BIN}" "${WIN_LAUNCHER_BIN}" "${BIN}-gateway.bat"
 
             # Copy Go binaries to Electron project
-            cp -f "${BIN}.exe" ../clawpet-frontend/clawpet/picoclaw.exe
-            cp -f "${LAUNCHER_BIN}" ../clawpet-frontend/clawpet/picoclaw-web.exe
+            cp -f "${WIN_BIN}" ../clawpet-frontend/clawpet/picoclaw.exe
+            cp -f "${WIN_LAUNCHER_BIN}" ../clawpet-frontend/clawpet/picoclaw-web.exe
             
             # Build Electron app with electron-builder (pass architecture from matrix)
             cd ../clawpet-frontend/clawpet
@@ -229,8 +227,8 @@ jobs:
             cd ../..
             if [ -d "clawpet-frontend/clawpet/dist/win-unpacked" ]; then
               # Ensure backend binaries are in win-unpacked
-              cp -f "dist/${BIN}.exe" clawpet-frontend/clawpet/dist/win-unpacked/
-              cp -f "dist/${LAUNCHER_BIN}" clawpet-frontend/clawpet/dist/win-unpacked/
+              cp -f "dist/${WIN_BIN}" clawpet-frontend/clawpet/dist/win-unpacked/
+              cp -f "dist/${WIN_LAUNCHER_BIN}" clawpet-frontend/clawpet/dist/win-unpacked/
               
               # Package win-unpacked as zip
               cd clawpet-frontend/clawpet/dist
@@ -238,7 +236,7 @@ jobs:
               echo "鉁?Win-unpacked debug package created"
             fi
           else
-            # Linux/macOS package
+            # Linux/macOS/FreeBSD package (Gateway + Launcher + startup script)
             printf '%s\n' \
               '#!/usr/bin/env sh' \
               'set -eu' \
@@ -246,7 +244,7 @@ jobs:
               'exec "$SCRIPT_DIR/clawpet" gateway "$@"' \
               > "${BIN}-gateway"
             chmod +x "${BIN}-gateway"
-            tar -czf "${BASE}.tar.gz" "${BIN}" "${BIN}-gateway"
+            tar -czf "${BASE}.tar.gz" "${BIN}" "${LAUNCHER_BIN}" "${BIN}-gateway"
           fi
 
       - name: Upload package artifact
