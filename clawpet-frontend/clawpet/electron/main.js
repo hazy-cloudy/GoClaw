@@ -894,6 +894,13 @@ function completeStartupAndShowDesktop(options = {}) {
 
   // 延迟创建窗口，确保状态更新
   setTimeout(() => {
+    // 检查是否需要进入引导模式
+    if (onboardingLocked) {
+      logToFile('[STARTUP] onboarding locked after startup, entering onboarding mode');
+      enterOnboardingMode('first-run');
+      return;
+    }
+
     if (!petWindow || petWindow.isDestroyed()) {
       createPetWindow();
     }
