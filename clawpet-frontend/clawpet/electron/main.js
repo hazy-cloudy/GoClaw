@@ -124,6 +124,16 @@ function hideRuntimeWindowsForOnboarding() {
 }
 
 function enterOnboardingMode(reason = 'manual', { rerun = false } = {}) {
+  // 只有在首次运行或手动重新引导时才进入引导模式
+  // 避免在正常启动时意外触发引导
+  const currentState = loadOnboardingState();
+  const shouldEnter = !currentState || currentState.completed !== true || reason === 'manual-rerun';
+  
+  if (!shouldEnter) {
+    logToFile('[ONBOARDING] skipping enterOnboardingMode - already completed');
+    return;
+  }
+  
   onboardingLocked = true;
   markOnboardingPending(reason);
   stopAllMediaPlayback(reason);
