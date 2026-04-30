@@ -26,7 +26,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-goclaw-dev.ps1 -Restart -
 ### 仅后端
 
 ```powershell
-$env:PICOCLAW_CONFIG = (Resolve-Path .\.goclaw-runtime\config.json)
 .\picoclaw.exe gateway -E
 ```
 

@@ -22,7 +22,7 @@ $frontendRoot = Join-Path $repoRoot "clawpet-frontend"
 $petclawDir = Join-Path $frontendRoot "clawpet"
 $electronEntry = Join-Path $petclawDir "electron\main.js"
 $mainBinary = Join-Path $repoRoot "picoclaw.exe"
-$gatewayHomeDir = Join-Path $repoRoot ".goclaw-runtime"
+$gatewayHomeDir = Join-Path $env:USERPROFILE ".picoclaw"
 $hideTerminalWindows = $true
 if ($ShowTerminalWindows) {
   $hideTerminalWindows = $false
@@ -31,7 +31,7 @@ if ($ShowTerminalWindows) {
 }
 
 if ([string]::IsNullOrWhiteSpace($GatewayConfigPath)) {
-  $GatewayConfigPath = Join-Path $repoRoot ".goclaw-runtime\config.json"
+  $GatewayConfigPath = Join-Path $env:USERPROFILE ".picoclaw\config.json"
 }
 
 if ([string]::IsNullOrWhiteSpace($DashboardUrl)) {

@@ -54,33 +54,25 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-goclaw-dev.ps1 -Restart -
 
 ```powershell
 $env:PICOCLAW_LAUNCHER_TOKEN='goclaw-local-token'
-$env:PICOCLAW_HOME = (Resolve-Path .\.goclaw-runtime)
-$env:PICOCLAW_CONFIG = (Resolve-Path .\.goclaw-runtime\config.json)
-.\picoclaw-web.exe -no-browser -port 18800 .\.goclaw-runtime\config.json
+.\picoclaw-web.exe -no-browser -port 18800
 ```
 
 如果本地没有 launcher 二进制：
 
 ```powershell
 $env:PICOCLAW_LAUNCHER_TOKEN='goclaw-local-token'
-$env:PICOCLAW_HOME = (Resolve-Path .\.goclaw-runtime)
-$env:PICOCLAW_CONFIG = (Resolve-Path .\.goclaw-runtime\config.json)
-go run -tags "goolm,stdjson" .\web\backend -no-browser -console -port 18800 .\.goclaw-runtime\config.json
+go run -tags "goolm,stdjson" .\web\backend -no-browser -console -port 18800
 ```
 
 ### 2) 仅启动 gateway（18790）
 
 ```powershell
-$env:PICOCLAW_HOME = (Resolve-Path .\.goclaw-runtime)
-$env:PICOCLAW_CONFIG = (Resolve-Path .\.goclaw-runtime\config.json)
 .\picoclaw.exe gateway -E
 ```
 
 如果本地没有 `picoclaw.exe`：
 
 ```powershell
-$env:PICOCLAW_HOME = (Resolve-Path .\.goclaw-runtime)
-$env:PICOCLAW_CONFIG = (Resolve-Path .\.goclaw-runtime\config.json)
 go run -tags "goolm,stdjson" .\cmd\picoclaw gateway
 ```
 
