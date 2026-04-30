@@ -18,7 +18,6 @@
       "output": "dist"
     },
     "files": [
-      "**/*",
       ".next/**/*",
       "node_modules/**/*",
       "electron/**/*"
