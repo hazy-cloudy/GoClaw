@@ -246,6 +246,9 @@ function startNextServer() {
       ELECTRON_RUN_AS_NODE: '1',
       NODE_ENV: 'production',
       PORT: '3000',
+      NEXT_PUBLIC_PICOCLAW_API_URL: 'http://127.0.0.1:18800',
+      NEXT_PUBLIC_PICOCLAW_WS_URL: 'ws://127.0.0.1:18800',
+      NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL: 'http://127.0.0.1:18790',
     },
   });
 
@@ -579,13 +582,22 @@ function createPetWindow() {
     petRendererRetryCount = 0;
     clearPetRendererRetryTimer();
     logToFile('[PET WINDOW] did-finish-load');
+    // Ensure window is shown if ready-to-show didn't fire
+    if (!onboardingLocked && petWindow && !petWindow.isDestroyed() && !petWindow.isVisible()) {
+      logToFile('[PET WINDOW] forcing show from did-finish-load');
+      petWindow.show();
+    }
   });
 
   petWindow.once('ready-to-show', () => {
+    logToFile('[PET WINDOW] ready-to-show triggered');
     setPetWindowClickThrough(true);
     startPetHoverMonitor();
     if (!onboardingLocked) {
+      logToFile('[PET WINDOW] showing pet window from ready-to-show');
       petWindow.show();
+    } else {
+      logToFile('[PET WINDOW] skipping show (onboarding locked)');
     }
   });
 
@@ -1350,6 +1362,29 @@ function startGateway(exePath, workDir) {
   return new Promise((resolve, reject) => {
     const configDir = path.join(os.homedir(), '.goclaw-runtime');
     const configPath = path.join(configDir, 'config.json');
+    
+    logToFile(`[GATEWAY] Config dir: ${configDir}`);
+    logToFile(`[GATEWAY] Config path: ${configPath}`);
+    logToFile(`[GATEWAY] Config exists: ${fs.existsSync(configPath)}`);
+    
+    if (fs.existsSync(configPath)) {
+      try {
+        const configContent = fs.readFileSync(configPath, 'utf-8');
+        const config = JSON.parse(configContent);
+        const defaultModel = config.agents?.defaults?.model_name;
+        const modelList = config.model_list || [];
+        const defaultModelConfig = modelList.find(m => m.model_name === defaultModel);
+        
+        logToFile(`[GATEWAY] Default model: ${defaultModel}`);
+        logToFile(`[GATEWAY] Model config found: ${!!defaultModelConfig}`);
+        if (defaultModelConfig) {
+          logToFile(`[GATEWAY] Has api_keys: ${!!defaultModelConfig.api_keys}`);
+          logToFile(`[GATEWAY] api_keys length: ${defaultModelConfig.api_keys?.length || 0}`);
+        }
+      } catch (error) {
+        logToFile(`[GATEWAY] Failed to read config: ${error.message}`);
+      }
+    }
     
     gatewayProcess = spawn(exePath, [
       'gateway',

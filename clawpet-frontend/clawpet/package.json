@@ -20,13 +20,15 @@
     "files": [
       ".next/**/*",
       "node_modules/**/*",
-      "electron/**/*"
+      "electron/**/*",
+      "public/**/*"
     ],
     "asar": true,
     "asarUnpack": [
       "**/*.node",
       ".next/**/*",
       "node_modules/**/*",
+      "public/**/*",
       "picoclaw.exe",
       "picoclaw-web.exe"
     ],
