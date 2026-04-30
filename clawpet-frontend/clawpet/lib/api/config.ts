@@ -76,7 +76,7 @@ export function getApiBaseUrl(): string {
   if (typeof window !== 'undefined' && window.location?.origin) {
     // Check if running in Electron
     if (window.electronAPI) {
-      return LOCAL_DIRECT_GATEWAY_ORIGIN // 18790
+      return LOCAL_DEFAULT_ORIGIN // 18800 (Launcher) - /api/config and other REST APIs are on Launcher
     }
     const port = window.location.port
     if (port === '3000' || port === '3001') {
