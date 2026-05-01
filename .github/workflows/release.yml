@@ -348,10 +348,11 @@ jobs:
           exit /b %EXIT_CODE%
           '@ | Out-File -FilePath "${{ env.APP_NAME }}-gateway.bat" -Encoding ASCII
 
-          # Standard package using PowerShell Compress-Archive
+          # Standard package using PowerShell Compress-Archive (Backend only)
           $zipFiles = @($WIN_BIN, $WIN_LAUNCHER_BIN, "${{ env.APP_NAME }}-gateway.bat")
-          Compress-Archive -Path $zipFiles -DestinationPath "${BASE}.zip" -Force
-          Write-Host "✅ Standard package created: ${BASE}.zip"
+          $standardZip = "${BASE}_backend.zip"
+          Compress-Archive -Path $zipFiles -DestinationPath $standardZip -Force
+          Write-Host "✅ Standard backend package created: $standardZip"
 
           # Copy Go binaries to Electron project
           Copy-Item -Path $WIN_BIN -Destination "../clawpet-frontend/clawpet/picoclaw.exe" -Force
@@ -372,13 +373,20 @@ jobs:
           Set-Location dist
           Get-ChildItem
           
-          # Copy zip archive
-          $zipFile = Get-ChildItem -Filter "*.zip" | Select-Object -First 1
-          if ($zipFile) {
+          # Copy Electron app zip to release directory
+          Set-Location dist
+          Get-ChildItem
+          
+          # Find Electron builder output (usually in win-unpacked or as installer)
+          $electronZip = Get-ChildItem -Filter "ClawPet*.zip" | Select-Object -First 1
+          if ($electronZip) {
             $repoDist = "../../../dist"
             New-Item -ItemType Directory -Force -Path $repoDist | Out-Null
-            Copy-Item -Path $zipFile.FullName -Destination "${repoDist}/${{ env.APP_NAME }}_${{ matrix.file_os }}_${{ matrix.file_arch }}.zip" -Force
-            Write-Host "✅ Zip archive: $($zipFile.Name)"
+            $electronDest = "${repoDist}/${{ env.APP_NAME }}_Electron_${{ matrix.file_os }}_${{ matrix.file_arch }}.zip"
+            Copy-Item -Path $electronZip.FullName -Destination $electronDest -Force
+            Write-Host "✅ Electron app zip: $($electronZip.Name)"
+          } else {
+            Write-Host "⚠️  No Electron zip found, checking for win-unpacked..." -ForegroundColor Yellow
           }
           
           # Copy win-unpacked directory for debugging
