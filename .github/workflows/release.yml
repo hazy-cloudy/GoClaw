@@ -415,10 +415,6 @@ jobs:
             npx electron-builder --win --publish never
           }
           
-          # Copy built zip to release directory
-          Set-Location dist
-          Get-ChildItem
-          
           # Copy Electron app zip to release directory
           Set-Location dist
           Get-ChildItem
