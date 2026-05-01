@@ -22,7 +22,7 @@ env:
 
 jobs:
   build-linux-macos-freebsd:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.goos == 'darwin' && 'macos-latest' || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -199,11 +199,57 @@ jobs:
           chmod +x "${BIN}-gateway"
           tar -czf "${BASE}.tar.gz" "${BIN}" "${LAUNCHER_BIN}" "${BIN}-gateway"
 
+      - name: Package macOS Electron App
+        if: matrix.goos == 'darwin'
+        shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          set -euo pipefail
+          
+          # Copy Go binaries to Electron project
+          cp dist/${APP_NAME} clawpet-frontend/clawpet/picoclaw
+          cp dist/${APP_NAME}-web clawpet-frontend/clawpet/picoclaw-web
+          
+          # Build Electron app for macOS
+          cd clawpet-frontend/clawpet
+          
+          # Install dependencies
+          npm install
+          
+          # Build Next.js
+          npm run build
+          
+          # Package with electron-builder
+          if [[ "${{ matrix.goarch }}" == "arm64" ]]; then
+            npx electron-builder --mac --arm64 --publish never
+          elif [[ "${{ matrix.goarch }}" == "amd64" ]]; then
+            npx electron-builder --mac --x64 --publish never
+          else
+            npx electron-builder --mac --publish never
+          fi
+          
+          # Copy Electron app zip to release directory
+          cd dist
+          
+          # Find Electron builder output
+          electronZip=$(ls -t ClawPet*.zip 2>/dev/null | head -1)
+          if [[ -n "$electronZip" ]]; then
+            repoDist="../../../dist"
+            mkdir -p "$repoDist"
+            cp "$electronZip" "${repoDist}/${APP_NAME}_Electron_${{ matrix.file_os }}_${{ matrix.file_arch }}.zip"
+            echo "✅ Electron app zip: $electronZip"
+          else
+            echo "⚠️  No Electron zip found"
+          fi
+
       - name: Upload package artifact
         uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goarm && format('-arm{0}', matrix.goarm) || '' }}
-          path: dist/*.tar.gz
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
           if-no-files-found: error
 
   build-windows:
