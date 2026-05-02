@@ -7,6 +7,6 @@ const (
 	// AppName is the name of the app
 	AppName = "PicoClaw"
 
-	DefaultPicoClawHome = ".picoclaw"
+	DefaultPicoClawHome = ".goclaw-runtime"
 	WorkspaceName       = "workspace"
 )
