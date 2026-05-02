@@ -48,9 +48,9 @@ const PET_RENDERER_MAX_RETRIES = 60;
 
 /**
  * 设置 Electron 用户数据目录
- * 使用 .goclaw 目录存储日志等数据
+ * 使用 .picoclaw 目录存储日志等数据
  */
-const userDataPath = path.join(os.homedir(), '.goclaw');
+const userDataPath = path.join(os.homedir(), '.picoclaw');
 app.setPath('userData', userDataPath);
 const onboardingStatePath = path.join(userDataPath, 'onboarding-state.json');
 
@@ -60,7 +60,7 @@ if (!fs.existsSync(userDataPath)) {
 
 /**
  * 日志系统配置
- * 所有日志输出到 ~/.goclaw/logs.txt
+ * 所有日志输出到 ~/.picoclaw/logs.txt
  */
 const logFilePath = path.join(userDataPath, 'logs.txt');
 const logStream = fs.createWriteStream(logFilePath, { flags: 'a' });
@@ -1304,7 +1304,7 @@ async function startBackendServices() {
  */
 function startLauncher(exePath, workDir) {
   return new Promise((resolve, reject) => {
-    const configDir = path.join(os.homedir(), '.goclaw-runtime');
+    const configDir = path.join(os.homedir(), '.picoclaw');
     if (!fs.existsSync(configDir)) {
       fs.mkdirSync(configDir, { recursive: true });
     }
@@ -1377,7 +1377,7 @@ function startLauncher(exePath, workDir) {
  */
 function startGateway(exePath, workDir) {
   return new Promise((resolve, reject) => {
-    const configDir = path.join(os.homedir(), '.goclaw-runtime');
+    const configDir = path.join(os.homedir(), '.picoclaw');
     const configPath = path.join(configDir, 'config.json');
     
     logToFile(`[GATEWAY] Config dir: ${configDir}`);
