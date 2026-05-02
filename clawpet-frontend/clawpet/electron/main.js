@@ -48,21 +48,106 @@ const PET_RENDERER_MAX_RETRIES = 60;
 
 /**
  * 设置 Electron 用户数据目录
- * 使用 .goclaw 目录存储日志等数据
+ * 统一使用 .picoclaw 目录存储日志、配置和运行数据。
  */
-const userDataPath = path.join(os.homedir(), '.goclaw');
+const userDataPath = path.join(os.homedir(), '.picoclaw');
+const legacyUserDataPath = path.join(os.homedir(), '.goclaw');
+const legacyRuntimePaths = [
+  path.join(os.homedir(), '.goclaw-runtime'),
+  path.join(process.cwd(), '.goclaw-runtime'),
+];
+
 app.setPath('userData', userDataPath);
 const onboardingStatePath = path.join(userDataPath, 'onboarding-state.json');
+const logFilePath = path.join(userDataPath, 'logs.txt');
+const mainConfigPath = path.join(userDataPath, 'config.json');
 
-if (!fs.existsSync(userDataPath)) {
-  fs.mkdirSync(userDataPath, { recursive: true });
+function ensureDirectory(dirPath) {
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true });
+  }
 }
+
+function copyFileIfMissing(sourcePath, targetPath) {
+  if (!fs.existsSync(sourcePath) || fs.existsSync(targetPath)) {
+    return;
+  }
+  ensureDirectory(path.dirname(targetPath));
+  fs.copyFileSync(sourcePath, targetPath);
+}
+
+function mergeDirectoryIfExists(sourcePath, targetPath) {
+  if (!fs.existsSync(sourcePath)) {
+    return;
+  }
+  ensureDirectory(targetPath);
+  fs.cpSync(sourcePath, targetPath, {
+    recursive: true,
+    force: false,
+    errorOnExist: false,
+  });
+}
+
+function normalizeConfigJsonNoBom(configPath) {
+  if (!fs.existsSync(configPath)) {
+    return;
+  }
+  const raw = fs.readFileSync(configPath);
+  const hasUtf8Bom = raw.length >= 3 && raw[0] === 0xEF && raw[1] === 0xBB && raw[2] === 0xBF;
+  if (hasUtf8Bom) {
+    fs.writeFileSync(configPath, raw.slice(3));
+  }
+}
+
+function normalizePicoclawConfig(configPath) {
+  if (!fs.existsSync(configPath)) {
+    return;
+  }
+
+  try {
+    normalizeConfigJsonNoBom(configPath);
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    const expectedWorkspace = path.join(userDataPath, 'workspace');
+    const workspace = config?.agents?.defaults?.workspace;
+
+    if (typeof workspace === 'string' && /(^|[\\/])\.goclaw(?:-runtime)?([\\/]|$)/.test(workspace)) {
+      config.agents.defaults.workspace = expectedWorkspace;
+      fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+    }
+  } catch (error) {
+    console.warn(`[BOOTSTRAP] Failed to normalize config at ${configPath}: ${error.message}`);
+  }
+}
+
+function migrateLegacyRuntimeData() {
+  ensureDirectory(userDataPath);
+
+  copyFileIfMissing(path.join(legacyUserDataPath, 'onboarding-state.json'), onboardingStatePath);
+  copyFileIfMissing(path.join(legacyUserDataPath, 'logs.txt'), logFilePath);
+
+  const visited = new Set();
+  for (const sourceDir of legacyRuntimePaths) {
+    const resolvedSource = path.resolve(sourceDir);
+    if (visited.has(resolvedSource) || !fs.existsSync(resolvedSource)) {
+      continue;
+    }
+    visited.add(resolvedSource);
+
+    copyFileIfMissing(path.join(resolvedSource, 'config.json'), mainConfigPath);
+    copyFileIfMissing(path.join(resolvedSource, '.security.yml'), path.join(userDataPath, '.security.yml'));
+    mergeDirectoryIfExists(path.join(resolvedSource, 'workspace'), path.join(userDataPath, 'workspace'));
+    mergeDirectoryIfExists(path.join(resolvedSource, 'logs'), path.join(userDataPath, 'logs'));
+  }
+
+  normalizePicoclawConfig(mainConfigPath);
+}
+
+migrateLegacyRuntimeData();
 
 /**
  * 日志系统配置
- * 所有日志输出到 ~/.goclaw/logs.txt
+ * 所有日志输出到 ~/.picoclaw/logs.txt
  */
-const logFilePath = path.join(userDataPath, 'logs.txt');
 const logStream = fs.createWriteStream(logFilePath, { flags: 'a' });
 
 function loadOnboardingState() {
@@ -1238,6 +1323,7 @@ app.on('before-quit', () => {
  */
 async function startBackendServices() {
   const exeDir = path.dirname(process.execPath);
+  normalizeConfigJsonNoBom(mainConfigPath);
 
   // electron-builder extraResources are placed in resources/ by default.
   // Keep exe-dir fallback for local debug layouts.
@@ -1304,11 +1390,9 @@ async function startBackendServices() {
  */
 function startLauncher(exePath, workDir) {
   return new Promise((resolve, reject) => {
-    const configDir = path.join(os.homedir(), '.goclaw-runtime');
-    if (!fs.existsSync(configDir)) {
-      fs.mkdirSync(configDir, { recursive: true });
-    }
-    
+    const configDir = userDataPath;
+    ensureDirectory(configDir);
+
     const configPath = path.join(configDir, 'config.json');
     
     if (!launcherToken) {
@@ -1377,7 +1461,7 @@ function startLauncher(exePath, workDir) {
  */
 function startGateway(exePath, workDir) {
   return new Promise((resolve, reject) => {
-    const configDir = path.join(os.homedir(), '.goclaw-runtime');
+    const configDir = userDataPath;
     const configPath = path.join(configDir, 'config.json');
     
     logToFile(`[GATEWAY] Config dir: ${configDir}`);
