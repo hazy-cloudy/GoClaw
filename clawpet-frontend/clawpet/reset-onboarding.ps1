@@ -44,7 +44,7 @@ if ($confirm -ne "y" -and $confirm -ne "Y") {
 }
 
 # 定义路径
-$goclawDir = "$env:USERPROFILE\.goclaw"
+$goclawDir = "$env:USERPROFILE\.picoclaw"
 $onboardingStateFile = "$goclawDir\onboarding-state.json"
 $logFile = "$goclawDir\logs.txt"
 $clawpetExe = "D:\study part\GoClawPet\clawpet-frontend\clawpet\dist\win-unpacked\ClawPet.exe"

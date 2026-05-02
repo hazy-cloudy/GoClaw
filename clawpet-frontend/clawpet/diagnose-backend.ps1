@@ -112,7 +112,7 @@ try {
 # 检查日志文件
 Write-Host "`n[4] 检查日志文件" -ForegroundColor Yellow
 
-$logPath = "$env:USERPROFILE\.goclaw\logs.txt"
+$logPath = "$env:USERPROFILE\.picoclaw\logs.txt"
 if (Test-Path $logPath) {
     Write-Host "  ✓ 日志文件存在: $logPath" -ForegroundColor Green
     
@@ -137,5 +137,5 @@ Write-Host "`n提示：" -ForegroundColor Yellow
 Write-Host "1. 如果 Gateway 或 Launcher 未运行，请重启 ClawPet 应用" -ForegroundColor White
 Write-Host "2. 如果二进制文件缺失，请重新打包应用" -ForegroundColor White
 Write-Host "3. 如果配置有问题，请检查 ~/.picoclaw/config.json" -ForegroundColor White
-Write-Host "4. 查看详细日志: Get-Content `$env:USERPROFILE\.goclaw\logs.txt -Tail 50" -ForegroundColor White
+Write-Host "4. 查看详细日志: Get-Content `$env:USERPROFILE\.picoclaw\logs.txt -Tail 50" -ForegroundColor White
 Write-Host ""
