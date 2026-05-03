@@ -8,6 +8,7 @@ declare global {
     animation?: string
     animationHints?: string[]
     audio?: string
+    duration_ms?: number
   }
 
   interface Window {
@@ -27,6 +28,7 @@ declare global {
         (payload: BubblePayload): void
         (text: string | null, emotion: string, audio?: string): void
       }
+      reportBubbleWindowSize?: (size: { width: number; height: number }) => void
       onSettingsUpdate?: (callback: (settings: unknown) => void) => void
       onBubbleShow?: (callback: (payload: BubblePayload) => void) => void
       onForceStopMedia?: (callback: () => void) => () => void

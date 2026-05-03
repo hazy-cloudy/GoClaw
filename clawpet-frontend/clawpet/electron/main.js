@@ -14,14 +14,16 @@
  * - 前端面板：通过环境变量 GOCLAW_DASHBOARD_URL 连接（默认 3000）
  */
 
-const { app, BrowserWindow, ipcMain, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, globalShortcut } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
+const net = require('net');
 const { spawn } = require('child_process');
 
 // 全局窗口引用
 let petWindow = null;              // 桌宠窗口
+let bubbleWindow = null;           // 气泡窗口
 let settingsWindow = null;         // 设置窗口
 let onboardingWindow = null;       // 初始化窗口
 let startupWindow = null;          // 启动进度窗口
@@ -31,6 +33,10 @@ let petRendererRetryCount = 0;     // pet renderer retry count
 let startupCompleted = false;      // startup completed flag
 let petHoverMonitorTimer = null;
 let petHovering = false;
+let petClickThroughEnabled = false;
+let petTopClampApplying = false;
+let petDragActive = false;
+let petTopCorrectionTimer = null;
 let onboardingLocked = false;
 let lastBubbleFingerprint = '';
 let lastBubbleAt = 0;
@@ -39,110 +45,33 @@ let lastBubbleAt = 0;
 let gatewayProcess = null;         // Gateway 进程
 let launcherProcess = null;        // Launcher 进程
 
-// 桌宠窗口尺寸（宽度280px，高度380px）
-const PET_WIDTH = 280;
-const PET_HEIGHT = 380;
+// 桌宠窗口尺寸（缩小：宽度150px，高度180px）
+const PET_WIDTH = 150;
+const PET_HEIGHT = 180;
 const PET_WINDOW_MARGIN = 16;
 const PET_RENDERER_RETRY_DELAY_MS = 1200;
 const PET_RENDERER_MAX_RETRIES = 60;
+const BUBBLE_WINDOW_DEFAULT_WIDTH = 320;
+const BUBBLE_WINDOW_DEFAULT_HEIGHT = 140;
+const BUBBLE_WINDOW_MIN_WIDTH = 140;
+const BUBBLE_WINDOW_MAX_WIDTH = 420;
+const BUBBLE_WINDOW_MIN_HEIGHT = 72;
+const BUBBLE_WINDOW_MAX_HEIGHT = 220;
+const BUBBLE_PET_OVERLAP = 14;
+let bubbleWindowWidth = BUBBLE_WINDOW_DEFAULT_WIDTH;
+let bubbleWindowHeight = BUBBLE_WINDOW_DEFAULT_HEIGHT;
 
 /**
  * 设置 Electron 用户数据目录
- * 统一使用 .picoclaw 目录存储日志、配置和运行数据。
+ * 使用 .picoclaw 目录存储日志等数据
  */
 const userDataPath = path.join(os.homedir(), '.picoclaw');
-const legacyUserDataPath = path.join(os.homedir(), '.goclaw');
-const legacyRuntimePaths = [
-  path.join(os.homedir(), '.goclaw-runtime'),
-  path.join(process.cwd(), '.goclaw-runtime'),
-];
-
 app.setPath('userData', userDataPath);
 const onboardingStatePath = path.join(userDataPath, 'onboarding-state.json');
-const logFilePath = path.join(userDataPath, 'logs.txt');
-const mainConfigPath = path.join(userDataPath, 'config.json');
 
-function ensureDirectory(dirPath) {
-  if (!fs.existsSync(dirPath)) {
-    fs.mkdirSync(dirPath, { recursive: true });
-  }
+if (!fs.existsSync(userDataPath)) {
+  fs.mkdirSync(userDataPath, { recursive: true });
 }
-
-function copyFileIfMissing(sourcePath, targetPath) {
-  if (!fs.existsSync(sourcePath) || fs.existsSync(targetPath)) {
-    return;
-  }
-  ensureDirectory(path.dirname(targetPath));
-  fs.copyFileSync(sourcePath, targetPath);
-}
-
-function mergeDirectoryIfExists(sourcePath, targetPath) {
-  if (!fs.existsSync(sourcePath)) {
-    return;
-  }
-  ensureDirectory(targetPath);
-  fs.cpSync(sourcePath, targetPath, {
-    recursive: true,
-    force: false,
-    errorOnExist: false,
-  });
-}
-
-function normalizeConfigJsonNoBom(configPath) {
-  if (!fs.existsSync(configPath)) {
-    return;
-  }
-  const raw = fs.readFileSync(configPath);
-  const hasUtf8Bom = raw.length >= 3 && raw[0] === 0xEF && raw[1] === 0xBB && raw[2] === 0xBF;
-  if (hasUtf8Bom) {
-    fs.writeFileSync(configPath, raw.slice(3));
-  }
-}
-
-function normalizePicoclawConfig(configPath) {
-  if (!fs.existsSync(configPath)) {
-    return;
-  }
-
-  try {
-    normalizeConfigJsonNoBom(configPath);
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    const expectedWorkspace = path.join(userDataPath, 'workspace');
-    const workspace = config?.agents?.defaults?.workspace;
-
-    if (typeof workspace === 'string' && /(^|[\\/])\.goclaw(?:-runtime)?([\\/]|$)/.test(workspace)) {
-      config.agents.defaults.workspace = expectedWorkspace;
-      fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
-    }
-  } catch (error) {
-    console.warn(`[BOOTSTRAP] Failed to normalize config at ${configPath}: ${error.message}`);
-  }
-}
-
-function migrateLegacyRuntimeData() {
-  ensureDirectory(userDataPath);
-
-  copyFileIfMissing(path.join(legacyUserDataPath, 'onboarding-state.json'), onboardingStatePath);
-  copyFileIfMissing(path.join(legacyUserDataPath, 'logs.txt'), logFilePath);
-
-  const visited = new Set();
-  for (const sourceDir of legacyRuntimePaths) {
-    const resolvedSource = path.resolve(sourceDir);
-    if (visited.has(resolvedSource) || !fs.existsSync(resolvedSource)) {
-      continue;
-    }
-    visited.add(resolvedSource);
-
-    copyFileIfMissing(path.join(resolvedSource, 'config.json'), mainConfigPath);
-    copyFileIfMissing(path.join(resolvedSource, '.security.yml'), path.join(userDataPath, '.security.yml'));
-    mergeDirectoryIfExists(path.join(resolvedSource, 'workspace'), path.join(userDataPath, 'workspace'));
-    mergeDirectoryIfExists(path.join(resolvedSource, 'logs'), path.join(userDataPath, 'logs'));
-  }
-
-  normalizePicoclawConfig(mainConfigPath);
-}
-
-migrateLegacyRuntimeData();
 
 function isLoopbackProxyValue(value) {
   if (typeof value !== 'string') {
@@ -162,7 +91,83 @@ function isLoopbackProxyValue(value) {
   }
 }
 
-function buildChildProcessEnv(extraEnv = {}) {
+function getLoopbackProxyTarget(value) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const defaultPorts = {
+    'http:': 80,
+    'https:': 443,
+    'socks5:': 1080,
+    'socks5h:': 1080,
+  };
+
+  try {
+    const parsed = new URL(trimmed);
+    const hostname = parsed.hostname;
+    if (hostname !== '127.0.0.1' && hostname !== 'localhost' && hostname !== '::1') {
+      return null;
+    }
+
+    const parsedPort = Number(parsed.port || defaultPorts[parsed.protocol] || 0);
+    if (!Number.isInteger(parsedPort) || parsedPort <= 0 || parsedPort > 65535) {
+      return null;
+    }
+
+    return {
+      host: hostname === '::1' ? '127.0.0.1' : hostname,
+      port: parsedPort,
+      cacheKey: `${hostname}:${parsedPort}`,
+    };
+  } catch {
+    return null;
+  }
+}
+
+const loopbackProxyReachabilityCache = new Map();
+
+function canConnectToLoopbackProxy(target, timeoutMs = 250) {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host: target.host, port: target.port });
+
+    const finalize = (reachable) => {
+      socket.removeAllListeners();
+      if (!socket.destroyed) {
+        socket.destroy();
+      }
+      resolve(reachable);
+    };
+
+    socket.setTimeout(timeoutMs);
+    socket.once('connect', () => finalize(true));
+    socket.once('timeout', () => finalize(false));
+    socket.once('error', () => finalize(false));
+  });
+}
+
+async function shouldKeepLoopbackProxy(value) {
+  const target = getLoopbackProxyTarget(value);
+  if (!target) {
+    return false;
+  }
+
+  const cached = loopbackProxyReachabilityCache.get(target.cacheKey);
+  if (typeof cached === 'boolean') {
+    return cached;
+  }
+
+  const reachable = await canConnectToLoopbackProxy(target);
+  loopbackProxyReachabilityCache.set(target.cacheKey, reachable);
+  return reachable;
+}
+
+async function buildChildProcessEnv(extraEnv = {}) {
   const childEnv = { ...process.env };
   const proxyKeys = [
     'HTTP_PROXY',
@@ -174,7 +179,17 @@ function buildChildProcessEnv(extraEnv = {}) {
   ];
 
   for (const key of proxyKeys) {
-    if (isLoopbackProxyValue(childEnv[key])) {
+    if (!isLoopbackProxyValue(childEnv[key])) {
+      continue;
+    }
+
+    // Keep valid loopback proxies such as Clash/mitmproxy when they are
+    // actually reachable. We only strip stale loopback proxy env vars when
+    // the local proxy endpoint is no longer accepting connections, because
+    // that breaks packaged child processes while preserving intentional proxy
+    // setups and required egress controls.
+    const keepProxy = await shouldKeepLoopbackProxy(childEnv[key]);
+    if (!keepProxy) {
       delete childEnv[key];
     }
   }
@@ -189,6 +204,7 @@ function buildChildProcessEnv(extraEnv = {}) {
  * 日志系统配置
  * 所有日志输出到 ~/.picoclaw/logs.txt
  */
+const logFilePath = path.join(userDataPath, 'logs.txt');
 const logStream = fs.createWriteStream(logFilePath, { flags: 'a' });
 
 function loadOnboardingState() {
@@ -238,6 +254,9 @@ function stopAllMediaPlayback(reason = 'unknown') {
   if (petWindow && !petWindow.isDestroyed()) {
     petWindow.webContents.send('force-stop-media');
   }
+  if (bubbleWindow && !bubbleWindow.isDestroyed()) {
+    bubbleWindow.webContents.send('force-stop-media');
+  }
 }
 
 function hideRuntimeWindowsForOnboarding() {
@@ -246,6 +265,9 @@ function hideRuntimeWindowsForOnboarding() {
   }
   if (petWindow && !petWindow.isDestroyed()) {
     petWindow.hide();
+  }
+  if (bubbleWindow && !bubbleWindow.isDestroyed()) {
+    bubbleWindow.hide();
   }
 }
 
@@ -344,7 +366,7 @@ const isProduction = app.isPackaged;
 let effectiveDashboardBaseUrl = dashboardBaseUrl;
 let nextServerProcess = null;
 
-function startNextServer() {
+async function startNextServer() {
   if (!isProduction) {
     return;
   }
@@ -373,18 +395,20 @@ function startNextServer() {
 
   logToFile(`[NEXT] Starting Next.js from ${appDir}`);
 
+  const childEnv = await buildChildProcessEnv({
+    ELECTRON_RUN_AS_NODE: '1',
+    NODE_ENV: 'production',
+    PORT: '3000',
+    NEXT_PUBLIC_PICOCLAW_API_URL: 'http://127.0.0.1:18800',
+    NEXT_PUBLIC_PICOCLAW_WS_URL: 'ws://127.0.0.1:18800',
+    NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL: 'http://127.0.0.1:18790',
+  });
+
   nextServerProcess = spawn(process.execPath, [nextCliPath, 'start', '-p', '3000'], {
     cwd: appDir,
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
-    env: buildChildProcessEnv({
-      ELECTRON_RUN_AS_NODE: '1',
-      NODE_ENV: 'production',
-      PORT: '3000',
-      NEXT_PUBLIC_PICOCLAW_API_URL: 'http://127.0.0.1:18800',
-      NEXT_PUBLIC_PICOCLAW_WS_URL: 'ws://127.0.0.1:18800',
-      NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL: 'http://127.0.0.1:18790',
-    }),
+    env: childEnv,
   });
 
   nextServerProcess.stdout.on('data', (data) => {
@@ -461,11 +485,13 @@ function setPetWindowClickThrough(enabled) {
   }
 
   try {
+    petClickThroughEnabled = Boolean(enabled);
     if (enabled) {
       petWindow.setIgnoreMouseEvents(true, { forward: true });
     } else {
       petWindow.setIgnoreMouseEvents(false);
     }
+    logToFile(`[PET WINDOW] click-through ${petClickThroughEnabled ? 'enabled' : 'disabled'}`);
   } catch (error) {
     logToFile(`[PET WINDOW] setIgnoreMouseEvents failed: ${String(error)}`);
   }
@@ -505,6 +531,57 @@ function stopPetHoverMonitor() {
     petHoverMonitorTimer = null;
   }
   petHovering = false;
+}
+
+function clearPetTopCorrectionTimer() {
+  if (petTopCorrectionTimer) {
+    clearTimeout(petTopCorrectionTimer);
+    petTopCorrectionTimer = null;
+  }
+}
+
+function clampPetWindowTopEdge() {
+  if (!petWindow || petWindow.isDestroyed() || petTopClampApplying) {
+    return;
+  }
+
+  const bounds = petWindow.getBounds();
+  const nearestDisplay = screen.getDisplayNearestPoint({
+    x: bounds.x + Math.floor(bounds.width / 2),
+    y: bounds.y + Math.floor(bounds.height / 2),
+  });
+  const minY = nearestDisplay.bounds.y;
+  if (bounds.y >= minY) {
+    return;
+  }
+
+  petTopClampApplying = true;
+  try {
+    petWindow.setPosition(bounds.x, minY, true);
+  } finally {
+    petTopClampApplying = false;
+  }
+}
+
+function schedulePetTopClamp(delayMs = 80) {
+  clearPetTopCorrectionTimer();
+  petTopCorrectionTimer = setTimeout(() => {
+    clampPetWindowTopEdge();
+    petTopCorrectionTimer = null;
+  }, delayMs);
+}
+
+function registerPetClickThroughShortcut() {
+  const accelerator = 'CommandOrControl+Shift+P';
+  const registered = globalShortcut.register(accelerator, () => {
+    setPetWindowClickThrough(!petClickThroughEnabled);
+  });
+
+  if (!registered) {
+    logToFile(`[SHORTCUT] failed to register ${accelerator}`);
+    return;
+  }
+  logToFile(`[SHORTCUT] registered ${accelerator}`);
 }
 
 function updateStartupPercent() {
@@ -597,6 +674,10 @@ function getRendererUrl() {
   return buildDashboardUrl(pathname);
 }
 
+function getBubbleRendererUrl() {
+  return buildDashboardUrl('/desktop-pet-bubble');
+}
+
 /**
  * 检查桌宠渲染页面是否就绪
  * @returns {Promise<boolean>}
@@ -611,6 +692,112 @@ async function isRendererReady() {
  */
 function loadPetRenderer(targetWindow) {
   return targetWindow.loadURL(getRendererUrl());
+}
+
+function loadBubbleRenderer(targetWindow) {
+  return targetWindow.loadURL(getBubbleRendererUrl());
+}
+
+function clampBubbleSize(width, height) {
+  const safeWidth = Number.isFinite(width) ? Math.round(width) : BUBBLE_WINDOW_DEFAULT_WIDTH;
+  const safeHeight = Number.isFinite(height) ? Math.round(height) : BUBBLE_WINDOW_DEFAULT_HEIGHT;
+  return {
+    width: Math.max(BUBBLE_WINDOW_MIN_WIDTH, Math.min(BUBBLE_WINDOW_MAX_WIDTH, safeWidth)),
+    height: Math.max(BUBBLE_WINDOW_MIN_HEIGHT, Math.min(BUBBLE_WINDOW_MAX_HEIGHT, safeHeight)),
+  };
+}
+
+function computeBubbleWindowPosition() {
+  if (!petWindow || petWindow.isDestroyed()) {
+    return null;
+  }
+
+  const petBounds = petWindow.getBounds();
+  const centerPoint = {
+    x: petBounds.x + Math.floor(petBounds.width / 2),
+    y: petBounds.y + Math.floor(petBounds.height / 2),
+  };
+  const display = screen.getDisplayNearestPoint(centerPoint);
+  const area = display.workArea;
+
+  let x = Math.round(petBounds.x + (petBounds.width - bubbleWindowWidth) / 2);
+  let y = Math.round(petBounds.y - bubbleWindowHeight + BUBBLE_PET_OVERLAP);
+
+  const minX = area.x;
+  const maxX = area.x + area.width - bubbleWindowWidth;
+  const minY = area.y;
+  const maxY = area.y + area.height - bubbleWindowHeight;
+
+  x = Math.max(minX, Math.min(maxX, x));
+  y = Math.max(minY, Math.min(maxY, y));
+
+  return { x, y };
+}
+
+function syncBubbleWindowToPet({ show = false } = {}) {
+  if (!bubbleWindow || bubbleWindow.isDestroyed()) {
+    return;
+  }
+
+  const position = computeBubbleWindowPosition();
+  if (!position) {
+    return;
+  }
+
+  bubbleWindow.setBounds({
+    x: position.x,
+    y: position.y,
+    width: bubbleWindowWidth,
+    height: bubbleWindowHeight,
+  }, false);
+
+  if (show && petWindow && !petWindow.isDestroyed() && petWindow.isVisible()) {
+    bubbleWindow.showInactive();
+  }
+}
+
+function hideBubbleWindow() {
+  if (!bubbleWindow || bubbleWindow.isDestroyed()) {
+    return;
+  }
+  bubbleWindow.hide();
+}
+
+function createBubbleWindow() {
+  if (bubbleWindow && !bubbleWindow.isDestroyed()) {
+    return;
+  }
+
+  const position = computeBubbleWindowPosition() || { x: 0, y: 0 };
+  bubbleWindow = new BrowserWindow({
+    width: bubbleWindowWidth,
+    height: bubbleWindowHeight,
+    x: position.x,
+    y: position.y,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    resizable: false,
+    skipTaskbar: true,
+    show: false,
+    focusable: false,
+    hasShadow: false,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js')
+    }
+  });
+
+  bubbleWindow.setIgnoreMouseEvents(true, { forward: true });
+
+  loadBubbleRenderer(bubbleWindow).catch((err) => {
+    logToFile(`[BUBBLE WINDOW] load renderer failed: ${String(err)}`);
+  });
+
+  bubbleWindow.on('closed', () => {
+    bubbleWindow = null;
+  });
 }
 
 function getPetWindowBottomRightPosition() {
@@ -699,6 +886,8 @@ function createPetWindow() {
 
   // Re-apply bottom-right placement to avoid OS window policy override.
   placePetWindowBottomRight(petWindow);
+  createBubbleWindow();
+  syncBubbleWindowToPet();
 
   loadPetRenderer(petWindow).catch((err) => {
     logToFile(`[PET WINDOW] load renderer failed: ${String(err)}`);
@@ -726,17 +915,75 @@ function createPetWindow() {
 
   petWindow.once('ready-to-show', () => {
     logToFile('[PET WINDOW] ready-to-show triggered');
-    setPetWindowClickThrough(true);
-    startPetHoverMonitor();
+    setPetWindowClickThrough(false);
     if (!onboardingLocked) {
       logToFile('[PET WINDOW] showing pet window from ready-to-show');
       petWindow.show();
+      syncBubbleWindowToPet();
     } else {
       logToFile('[PET WINDOW] skipping show (onboarding locked)');
     }
   });
 
+  petWindow.on('will-move', (event, newBounds) => {
+    if (!petWindow || petWindow.isDestroyed() || petTopClampApplying) {
+      return;
+    }
+
+    petDragActive = true;
+    clearPetTopCorrectionTimer();
+
+    const nearestDisplay = screen.getDisplayNearestPoint({
+      x: newBounds.x + Math.floor(newBounds.width / 2),
+      y: newBounds.y + Math.floor(newBounds.height / 2),
+    });
+    const minY = nearestDisplay.bounds.y;
+
+    if (newBounds.y >= minY - 96) {
+      return;
+    }
+
+    event.preventDefault();
+    petTopClampApplying = true;
+    try {
+      petWindow.setPosition(newBounds.x, minY, true);
+    } finally {
+      petTopClampApplying = false;
+    }
+  });
+
+  petWindow.on('moved', () => {
+    petDragActive = false;
+    schedulePetTopClamp(40);
+    syncBubbleWindowToPet({ show: bubbleWindow && !bubbleWindow.isDestroyed() && bubbleWindow.isVisible() });
+  });
+
+  petWindow.on('move', () => {
+    syncBubbleWindowToPet({ show: bubbleWindow && !bubbleWindow.isDestroyed() && bubbleWindow.isVisible() });
+  });
+
+  petWindow.on('show', () => {
+    if (bubbleWindow && !bubbleWindow.isDestroyed() && bubbleWindow.isVisible()) {
+      syncBubbleWindowToPet({ show: true });
+    }
+  });
+
+  petWindow.on('hide', () => {
+    hideBubbleWindow();
+  });
+
+  petWindow.on('blur', () => {
+    if (!petDragActive) {
+      schedulePetTopClamp(40);
+    }
+  });
+
   petWindow.on('closed', () => {
+    clearPetTopCorrectionTimer();
+    if (bubbleWindow && !bubbleWindow.isDestroyed()) {
+      bubbleWindow.close();
+      bubbleWindow = null;
+    }
     stopPetHoverMonitor();
     petWindow = null;
     app.quit();
@@ -755,8 +1002,7 @@ function resetPetWindow() {
   petWindow.setAlwaysOnTop(true);
   petWindow.setSkipTaskbar(true);
   petWindow.setBounds(getPetBounds(), true);
-  setPetWindowClickThrough(true);
-  startPetHoverMonitor();
+  setPetWindowClickThrough(false);
 }
 
 /**
@@ -1182,6 +1428,16 @@ ipcMain.on('set-pet-click-through', (_event, enabled) => {
   setPetWindowClickThrough(Boolean(enabled));
 });
 
+ipcMain.on('bubble-window-size', (_event, payload) => {
+  const next = clampBubbleSize(payload?.width, payload?.height);
+  if (next.width === bubbleWindowWidth && next.height === bubbleWindowHeight) {
+    return;
+  }
+  bubbleWindowWidth = next.width;
+  bubbleWindowHeight = next.height;
+  syncBubbleWindowToPet({ show: bubbleWindow && !bubbleWindow.isDestroyed() && bubbleWindow.isVisible() });
+});
+
 // 窗口最小化
 ipcMain.on('window-minimize', (event) => {
   const target = BrowserWindow.fromWebContents(event.sender);
@@ -1273,6 +1529,7 @@ ipcMain.on('show-bubble', (_event, data) => {
   const emotion = typeof data?.emotion === 'string' ? data.emotion.trim() : '';
   const fingerprint = `${audio}|${text}|${emotion}`;
   const now = Date.now();
+  const hasDetachedBubbleWindow = bubbleWindow && !bubbleWindow.isDestroyed();
 
   if (fingerprint && fingerprint === lastBubbleFingerprint && now - lastBubbleAt < 2500) {
     logToFile('[IPC] show-bubble dropped duplicated payload');
@@ -1282,8 +1539,13 @@ ipcMain.on('show-bubble', (_event, data) => {
   lastBubbleFingerprint = fingerprint;
   lastBubbleAt = now;
 
-  if (petWindow && !petWindow.isDestroyed()) {
+  if (!hasDetachedBubbleWindow && petWindow && !petWindow.isDestroyed()) {
     petWindow.webContents.send('bubble-show', data);
+  }
+
+  if (hasDetachedBubbleWindow) {
+    syncBubbleWindowToPet({ show: true });
+    bubbleWindow.webContents.send('bubble-show', data);
   }
 });
 
@@ -1302,6 +1564,7 @@ ipcMain.handle('startup-state', async () => startupState);
  * 根据配置决定显示启动窗口还是直接创建桌宠窗口
  */
 app.whenReady().then(async () => {
+  registerPetClickThroughShortcut();
   // 自动启动后端服务
   await startBackendServices();
   
@@ -1348,6 +1611,12 @@ app.on('window-all-closed', () => {
 
 // 应用退出前清理定时器
 app.on('before-quit', () => {
+  clearPetTopCorrectionTimer();
+  if (bubbleWindow && !bubbleWindow.isDestroyed()) {
+    bubbleWindow.close();
+    bubbleWindow = null;
+  }
+  globalShortcut.unregisterAll();
   if (startupPollTimer) {
     clearInterval(startupPollTimer);
     startupPollTimer = null;
@@ -1363,7 +1632,6 @@ app.on('before-quit', () => {
  */
 async function startBackendServices() {
   const exeDir = path.dirname(process.execPath);
-  normalizeConfigJsonNoBom(mainConfigPath);
 
   // electron-builder extraResources are placed in resources/ by default.
   // Keep exe-dir fallback for local debug layouts.
@@ -1398,7 +1666,7 @@ async function startBackendServices() {
   logToFile('[BACKEND] Starting embedded backend services...');
   if (isProduction) {
     try {
-      startNextServer();
+      await startNextServer();
     } catch (error) {
       logToFile(`[BACKEND] Failed to start Next.js: ${error.message}`);
     }
@@ -1428,19 +1696,28 @@ async function startBackendServices() {
 /**
  * 启动 Launcher 服务
  */
-function startLauncher(exePath, workDir) {
+async function startLauncher(exePath, workDir) {
+  const configDir = path.join(os.homedir(), '.picoclaw');
+  if (!fs.existsSync(configDir)) {
+    fs.mkdirSync(configDir, { recursive: true });
+  }
+  
+  const configPath = path.join(configDir, 'config.json');
+  
+  if (!launcherToken) {
+    launcherToken = embeddedLauncherTokenDefault;
+  }
+  process.env.GOCLAW_LAUNCHER_TOKEN = launcherToken;
+  process.env.PICOCLAW_LAUNCHER_TOKEN = launcherToken;
+
+  const childEnv = await buildChildProcessEnv({
+    PICOCLAW_LAUNCHER_TOKEN: launcherToken,
+    GOCLAW_LAUNCHER_TOKEN: launcherToken,
+    PICOCLAW_HOME: configDir,
+    PICOCLAW_CONFIG: configPath
+  });
+
   return new Promise((resolve, reject) => {
-    const configDir = userDataPath;
-    ensureDirectory(configDir);
-
-    const configPath = path.join(configDir, 'config.json');
-    
-    if (!launcherToken) {
-      launcherToken = embeddedLauncherTokenDefault;
-    }
-    process.env.GOCLAW_LAUNCHER_TOKEN = launcherToken;
-    process.env.PICOCLAW_LAUNCHER_TOKEN = launcherToken;
-
     launcherProcess = spawn(exePath, [
       '-port', '18800',
       '-no-browser',
@@ -1449,12 +1726,7 @@ function startLauncher(exePath, workDir) {
       cwd: workDir,
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: buildChildProcessEnv({
-        PICOCLAW_LAUNCHER_TOKEN: launcherToken,
-        GOCLAW_LAUNCHER_TOKEN: launcherToken,
-        PICOCLAW_HOME: configDir,
-        PICOCLAW_CONFIG: configPath
-      }),
+      env: childEnv,
     });
     
     launcherProcess.stdout.on('data', (data) => {
@@ -1498,10 +1770,16 @@ function startLauncher(exePath, workDir) {
 /**
  * 启动 Gateway 服务
  */
-function startGateway(exePath, workDir) {
+async function startGateway(exePath, workDir) {
+  const configDir = path.join(os.homedir(), '.picoclaw');
+  const configPath = path.join(configDir, 'config.json');
+
+  const childEnv = await buildChildProcessEnv({
+    PICOCLAW_HOME: configDir,
+    PICOCLAW_CONFIG: configPath
+  });
+
   return new Promise((resolve, reject) => {
-    const configDir = userDataPath;
-    const configPath = path.join(configDir, 'config.json');
     
     logToFile(`[GATEWAY] Config dir: ${configDir}`);
     logToFile(`[GATEWAY] Config path: ${configPath}`);
@@ -1533,10 +1811,7 @@ function startGateway(exePath, workDir) {
       cwd: workDir,
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: buildChildProcessEnv({
-        PICOCLAW_HOME: configDir,
-        PICOCLAW_CONFIG: configPath
-      }),
+      env: childEnv,
     });
     
     gatewayProcess.stdout.on('data', (data) => {
