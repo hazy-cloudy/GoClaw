@@ -571,7 +571,7 @@ if ((Test-HttpReady -Url $launcherBaseUrl -TimeoutSeconds 2) -or (Test-PortListe
       $escapedGatewayBinaryForLauncher = $resolvedGatewayBin.Replace("'", "''")
     }
 
-    $launcherCmd = "`$env:PICOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:PICOCLAW_HOME='$escapedConfigDir'; `$env:PICOCLAW_CONFIG='$escapedLauncherConfigPath'; "
+    $launcherCmd = "`$env:PICOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:PICOCLAW_HOME='$escapedConfigDir'; `$env:PICOCLAW_CONFIG='$escapedLauncherConfigPath'; `$env:PICOCLAW_CONFIG_DIR='$escapedConfigDir'; "
     if (-not [string]::IsNullOrWhiteSpace($escapedGatewayBinaryForLauncher)) {
       $launcherCmd += "`$env:PICOCLAW_BINARY='$escapedGatewayBinaryForLauncher'; "
     }
@@ -581,7 +581,12 @@ if ((Test-HttpReady -Url $launcherBaseUrl -TimeoutSeconds 2) -or (Test-PortListe
     $goCmd = Ensure-GoCommand
     $escapedGoCmd = $goCmd.Replace("'", "''")
     $escapedRepoRoot = $repoRoot.Replace("'", "''")
-    $launcherCmd = "`$env:PICOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:PICOCLAW_HOME='$escapedConfigDir'; `$env:PICOCLAW_CONFIG='$escapedLauncherConfigPath'; Set-Location '$escapedRepoRoot'; & '$escapedGoCmd' run -tags 'goolm,stdjson' ./web/backend -no-browser -console -port '$LauncherPort' '$escapedLauncherConfigPath'"
+    $launcherCmd = "`$env:PICOCLAW_LAUNCHER_TOKEN='$escapedLauncherToken'; `$env:PICOCLAW_HOME='$escapedConfigDir'; `$env:PICOCLAW_CONFIG='$escapedLauncherConfigPath'; "
+    if (-not [string]::IsNullOrWhiteSpace($resolvedGatewayBin)) {
+      $escapedGatewayBinaryForLauncher = $resolvedGatewayBin.Replace("'", "''")
+      $launcherCmd += "`$env:PICOCLAW_BINARY='$escapedGatewayBinaryForLauncher'; "
+    }
+    $launcherCmd += "Set-Location '$escapedRepoRoot'; & '$escapedGoCmd' run -tags 'goolm,stdjson' ./web/backend -no-browser -console -port '$LauncherPort' '$escapedLauncherConfigPath'"
     Start-DetachedPowerShell -Title "GoClaw - Launcher (go run)" -Command $launcherCmd
   }
 
@@ -765,14 +770,14 @@ if ((Test-HttpReady -Url $DashboardUrl -TimeoutSeconds 2)) {
     $escapedGatewayWsBaseUrl = $gatewayWsBaseUrl.Replace("'", "''")
     $escapedGatewayBaseUrl = $gatewayBaseUrl.Replace("'", "''")
     $escapedLauncherBaseUrl = $launcherBaseUrl.Replace("'", "''")
-    $petclawCmd = "`$env:NEXT_PUBLIC_PICOCLAW_API_URL='$escapedLauncherBaseUrl'; `$env:NEXT_PUBLIC_PICOCLAW_WS_URL='$escapedGatewayWsBaseUrl'; `$env:NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL='$escapedGatewayBaseUrl'; `$env:NEXT_PUBLIC_PICOCLAW_USE_CREDENTIALS='false'; Set-Location '$petclawDir'; npm run start -- --hostname 127.0.0.1 --port $FrontendPort"
+    $petclawCmd = "`$env:NEXT_PUBLIC_PICOCLAW_API_URL='$escapedLauncherBaseUrl'; `$env:NEXT_PUBLIC_PICOCLAW_WS_URL='$escapedGatewayWsBaseUrl'; `$env:NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL='false'; `$env:NEXT_PUBLIC_PICOCLAW_USE_CREDENTIALS='false'; Set-Location '$petclawDir'; npm run start -- --hostname 127.0.0.1 --port $FrontendPort"
   } else {
     Write-Step "Starting petclaw dashboard (dev mode)..."
     $gatewayWsBaseUrl = $gatewayBaseUrl -replace '^http:', 'ws:' -replace '^https:', 'wss:'
     $escapedGatewayWsBaseUrl = $gatewayWsBaseUrl.Replace("'", "''")
     $escapedGatewayBaseUrl = $gatewayBaseUrl.Replace("'", "''")
     $escapedLauncherBaseUrl = $launcherBaseUrl.Replace("'", "''")
-    $petclawCmd = "`$env:NEXT_PUBLIC_PICOCLAW_API_URL='$escapedLauncherBaseUrl'; `$env:NEXT_PUBLIC_PICOCLAW_WS_URL='$escapedGatewayWsBaseUrl'; `$env:NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL='$escapedGatewayBaseUrl'; `$env:NEXT_PUBLIC_PICOCLAW_USE_CREDENTIALS='false'; Set-Location '$petclawDir'; npm run dev -- --hostname 127.0.0.1 --port $FrontendPort --webpack"
+    $petclawCmd = "`$env:NEXT_PUBLIC_PICOCLAW_API_URL='$escapedLauncherBaseUrl'; `$env:NEXT_PUBLIC_PICOCLAW_WS_URL='$escapedGatewayWsBaseUrl'; `$env:NEXT_PUBLIC_PICOCLAW_DIRECT_GATEWAY_URL='false'; `$env:NEXT_PUBLIC_PICOCLAW_USE_CREDENTIALS='false'; Set-Location '$petclawDir'; npm run dev -- --hostname 127.0.0.1 --port $FrontendPort --webpack"
   }
 
   Start-DetachedPowerShell -Title "GoClaw - Petclaw" -Command $petclawCmd

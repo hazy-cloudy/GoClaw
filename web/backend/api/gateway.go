@@ -663,15 +663,20 @@ func (h *Handler) startGatewayLocked(initialStatus string, existingPid int) (int
 	// Clear old logs for this new run
 	gateway.logs.Reset()
 
-	// Ensure Pico Channel is configured before starting gateway
-	changed, err := h.EnsurePicoChannel("")
+	// Ensure desktop-facing channels are configured before starting gateway.
+	// Pico remains the compatibility/auth transport, while Pet exposes the
+	// dedicated /pet/* websocket routes used by the desk-pet frontend.
+	picoChanged, err := h.EnsurePicoChannel("")
 	if err != nil {
 		logger.ErrorC("gateway", fmt.Sprintf("Warning: failed to ensure pico channel: %v", err))
 		// Non-fatal: gateway can still start without pico channel
 	}
+	if _, err := h.EnsurePetChannel(""); err != nil {
+		logger.ErrorC("gateway", fmt.Sprintf("Warning: failed to ensure pet channel: %v", err))
+	}
 	// Refresh cached pico token in case EnsurePicoChannel generated a new one.
 	// Already holding gateway.mu from caller.
-	if changed {
+	if picoChanged {
 		refreshPicoTokensLocked(h.configPath)
 	}
 

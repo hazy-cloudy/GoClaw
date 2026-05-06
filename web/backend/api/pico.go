@@ -119,7 +119,12 @@ func (h *Handler) handleGetPicoToken(w http.ResponseWriter, r *http.Request) {
 	wsURL := h.buildWsURL(r)
 	if strings.Contains(r.URL.Path, "/api/pet/") {
 		protocol = "pet"
-		wsURL = h.buildChannelWsURL(r, "/pet/ws")
+		gatewayURL := h.gatewayProxyURL()
+		wsScheme := "ws"
+		if requestWSScheme(r) == "wss" {
+			wsScheme = "wss"
+		}
+		wsURL = wsScheme + "://" + gatewayURL.Host + "/pet/ws"
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -158,7 +163,12 @@ func (h *Handler) handleRegenPicoToken(w http.ResponseWriter, r *http.Request) {
 	wsURL := h.buildWsURL(r)
 	if strings.Contains(r.URL.Path, "/api/pet/") {
 		protocol = "pet"
-		wsURL = h.buildChannelWsURL(r, "/pet/ws")
+		gatewayURL := h.gatewayProxyURL()
+		wsScheme := "ws"
+		if requestWSScheme(r) == "wss" {
+			wsScheme = "wss"
+		}
+		wsURL = wsScheme + "://" + gatewayURL.Host + "/pet/ws"
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -209,6 +219,36 @@ func (h *Handler) EnsurePicoChannel(callerOrigin string) (bool, error) {
 	return changed, nil
 }
 
+// EnsurePetChannel enables the Pet channel with sane defaults so the desktop
+// frontend can connect to the dedicated /pet/* gateway routes instead of being
+// forced through Pico compatibility paths.
+func (h *Handler) EnsurePetChannel(callerOrigin string) (bool, error) {
+	cfg, err := config.LoadConfig(h.configPath)
+	if err != nil {
+		return false, fmt.Errorf("failed to load config: %w", err)
+	}
+
+	changed := false
+
+	if !cfg.Channels.Pet.Enabled {
+		cfg.Channels.Pet.Enabled = true
+		changed = true
+	}
+
+	if len(cfg.Channels.Pet.AllowOrigins) == 0 && callerOrigin != "" {
+		cfg.Channels.Pet.AllowOrigins = []string{callerOrigin}
+		changed = true
+	}
+
+	if changed {
+		if err := config.SaveConfig(h.configPath, cfg); err != nil {
+			return false, fmt.Errorf("failed to save config: %w", err)
+		}
+	}
+
+	return changed, nil
+}
+
 // handlePicoSetup automatically configures everything needed for the Pico Channel to work.
 //
 //	POST /api/pico/setup
@@ -233,7 +273,12 @@ func (h *Handler) handlePicoSetup(w http.ResponseWriter, r *http.Request) {
 	wsURL := h.buildWsURL(r)
 	if strings.Contains(r.URL.Path, "/api/pet/") {
 		protocol = "pet"
-		wsURL = h.buildChannelWsURL(r, "/pet/ws")
+		gatewayURL := h.gatewayProxyURL()
+		wsScheme := "ws"
+		if requestWSScheme(r) == "wss" {
+			wsScheme = "wss"
+		}
+		wsURL = wsScheme + "://" + gatewayURL.Host + "/pet/ws"
 	}
 
 	w.Header().Set("Content-Type", "application/json")
