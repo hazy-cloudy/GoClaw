@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/processutil"
 )
 
 const (
@@ -108,6 +109,7 @@ func NewProcessHook(ctx context.Context, name string, opts ProcessHookOptions) (
 	if len(opts.Env) > 0 {
 		cmd.Env = append(os.Environ(), opts.Env...)
 	}
+	processutil.PrepareBackgroundCommand(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("create process hook stdin: %w", err)

@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"github.com/sipeed/picoclaw/pkg/processutil"
 )
 
 // CodexCliProvider implements LLMProvider by wrapping the codex CLI as a subprocess.
@@ -50,6 +52,7 @@ func (p *CodexCliProvider) Chat(
 	args = append(args, "-") // read prompt from stdin
 
 	cmd := exec.CommandContext(ctx, p.command, args...)
+	processutil.PrepareBackgroundCommand(cmd)
 	cmd.Stdin = bytes.NewReader([]byte(prompt))
 
 	var stdout, stderr bytes.Buffer

@@ -17,6 +17,7 @@ import (
 
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/processutil"
 )
 
 // headerTransport is an http.RoundTripper that adds custom headers to requests
@@ -325,6 +326,7 @@ func (m *Manager) ConnectServer(
 			})
 		// Create command with context
 		cmd := exec.CommandContext(ctx, cfg.Command, cfg.Args...)
+		processutil.PrepareBackgroundCommand(cmd)
 
 		// Build environment variables with proper override semantics
 		// Use a map to ensure config variables override file variables

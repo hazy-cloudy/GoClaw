@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/sipeed/picoclaw/pkg/processutil"
 )
 
 const (
@@ -278,6 +280,7 @@ func windowsCommandLine(exePath string, args []string) string {
 
 func windowsRunKeyExists() (bool, error) {
 	cmd := exec.Command("reg", "query", `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, "/v", autoStartEntryName)
+	processutil.PrepareBackgroundCommand(cmd)
 	if err := cmd.Run(); err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
@@ -293,10 +296,12 @@ func setWindowsAutoStart(enabled bool, exePath string, args []string) error {
 	if enabled {
 		commandLine := windowsCommandLine(exePath, args)
 		cmd := exec.Command("reg", "add", key, "/v", autoStartEntryName, "/t", "REG_SZ", "/d", commandLine, "/f")
+		processutil.PrepareBackgroundCommand(cmd)
 		return cmd.Run()
 	}
 
 	cmd := exec.Command("reg", "delete", key, "/v", autoStartEntryName, "/f")
+	processutil.PrepareBackgroundCommand(cmd)
 	if err := cmd.Run(); err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
