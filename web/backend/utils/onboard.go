@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/sipeed/picoclaw/pkg/processutil"
 )
 
 var execCommand = exec.Command
@@ -23,6 +24,7 @@ func EnsureOnboarded(configPath string) error {
 	cmd := execCommand(FindPicoclawBinary(), "onboard")
 	cmd.Env = append(os.Environ(), config.EnvConfig+"="+configPath)
 	cmd.Stdin = strings.NewReader("n\n")
+	processutil.PrepareBackgroundCommand(cmd)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {

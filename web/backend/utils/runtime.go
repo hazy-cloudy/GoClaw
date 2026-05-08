@@ -10,6 +10,7 @@ import (
 
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/processutil"
 )
 
 // GetPicoclawHome returns the picoclaw home directory.
@@ -70,14 +71,18 @@ func GetLocalIP() string {
 
 // OpenBrowser automatically opens the given URL in the default browser.
 func OpenBrowser(url string) error {
+	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "linux":
-		return exec.Command("xdg-open", url).Start()
+		cmd = exec.Command("xdg-open", url)
 	case "windows":
-		return exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
 	case "darwin":
-		return exec.Command("open", url).Start()
+		cmd = exec.Command("open", url)
 	default:
 		return fmt.Errorf("unsupported platform")
 	}
+
+	processutil.PrepareBackgroundCommand(cmd)
+	return cmd.Start()
 }

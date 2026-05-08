@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/sipeed/picoclaw/pkg/processutil"
 	"github.com/sipeed/picoclaw/web/backend/utils"
 )
 
@@ -259,7 +260,9 @@ func (c *systemVersionCache) resetForTest() {
 // executePicoclawVersion runs the version subcommand against the
 // discovered picoclaw executable.
 func executePicoclawVersion(ctx context.Context, execPath string) (string, error) {
-	out, err := exec.CommandContext(ctx, execPath, "version").CombinedOutput()
+	cmd := exec.CommandContext(ctx, execPath, "version")
+	processutil.PrepareBackgroundCommand(cmd)
+	out, err := cmd.CombinedOutput()
 	if err == nil {
 		return string(out), nil
 	}
