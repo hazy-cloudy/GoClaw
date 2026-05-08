@@ -14,6 +14,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/cron"
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/pet/activity"
 	"github.com/sipeed/picoclaw/pkg/pet/action"
 	"github.com/sipeed/picoclaw/pkg/pet/asr"
 	"github.com/sipeed/picoclaw/pkg/pet/characters"
@@ -21,6 +22,7 @@ import (
 	petconfig "github.com/sipeed/picoclaw/pkg/pet/config"
 	"github.com/sipeed/picoclaw/pkg/pet/memory"
 	"github.com/sipeed/picoclaw/pkg/pet/modelconfig"
+	"github.com/sipeed/picoclaw/pkg/pet/proactive"
 	"github.com/sipeed/picoclaw/pkg/pet/skills"
 	"github.com/sipeed/picoclaw/pkg/pet/userprofile"
 	"github.com/sipeed/picoclaw/pkg/pet/voice"
@@ -47,6 +49,8 @@ type PetService struct {
 	cronService        *cron.CronService
 	userProfileManager *userprofile.Manager
 	skillsMgr          *skills.Manager
+	activityStore      *activity.Store
+	proactiveManager   *proactive.Manager
 
 	connSessions map[string]string
 
@@ -202,6 +206,13 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 	}
 
 	if workspacePath != "" {
+		// activityStore 负责把“用户让桌宠干过什么”沉淀成结构化记录，
+		// 后面的 weekly_report 和 progress_nudge 都会依赖它。
+		var err error
+		s.activityStore, err = activity.NewStore(workspacePath)
+		if err != nil {
+			logger.WarnCF("pet", "PetService: failed to create activity store", map[string]any{"error": err.Error()})
+		}
 		// 初始化 cron 服务
 		cronStorePath := filepath.Join(workspacePath, "cron", "jobs.json")
 		s.cronService = cron.NewCronService(cronStorePath, nil)
@@ -218,6 +229,33 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 				logger.DebugCF("pet", "PetService: skills manager initialized", nil)
 			}
 		}
+		// proactiveManager 是主动性系统的总入口。
+		// 当前先把快照、可打扰判断、policy 这几层底座跑通。
+		providers := []proactive.Provider{
+			proactive.NewWeeklyReportProvider(s.activityStore, proactive.NewWeeklyReportStateStore(workspacePath)),
+			proactive.NewProgressNudgeProvider(),
+		}
+		s.proactiveManager = proactive.NewManager(
+			proactive.NewHistoryStore(workspacePath),
+			func() proactive.Snapshot {
+				return proactive.BuildSnapshot(time.Now(), proactive.SnapshotDependencies{
+					ActivityStore:      s.activityStore,
+					ConfigManager:      s.configManager,
+					UserProfileManager: s.userProfileManager,
+					CharacterProvider:  s.charManager,
+					LastPushAt: func() time.Time {
+						if s.proactiveManager == nil {
+							return time.Time{}
+						}
+						return s.proactiveManager.LastPushAt()
+					},
+				})
+			},
+			providers,
+			func(intent proactive.Intent, level proactive.DeliveryLevel) error {
+				return s.deliverProactiveIntent(intent, level)
+			},
+		)
 	}
 
 	return s, nil
@@ -226,6 +264,10 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 func (s *PetService) Start() {
 	s.decayTicker = time.NewTicker(5 * time.Second)
 	go s.runEmotionDecay()
+	if s.proactiveManager != nil {
+		// 主动性系统是后台循环，不阻塞桌宠主链路。
+		go s.proactiveManager.Start(s.ctx)
+	}
 	if s.compressionSvc != nil {
 		s.compressionSvc.Start()
 	}
@@ -320,6 +362,21 @@ func (s *PetService) SetPushHandler(handler PushHandler) {
 func (s *PetService) Push(push any) {
 	if s.pushHandler != nil {
 		s.pushHandler(push)
+	}
+}
+
+func (s *PetService) recordUserActivity(sessionID, text string) {
+	if s.activityStore == nil || s.charManager == nil {
+		return
+	}
+	charID := s.charManager.GetCurrentID()
+	if charID == "" {
+		return
+	}
+	// 这里只记录最基础的一类活动：用户消息。
+	// 后续再逐步把 tool result / file output 也补进来。
+	if err := s.activityStore.Append(activity.BuildUserMessageEvent(charID, sessionID, text)); err != nil {
+		logger.WarnCF("pet", "PetService: failed to append activity event", map[string]any{"error": err.Error()})
 	}
 }
 
@@ -550,6 +607,13 @@ func (s *PetService) handleChat(sessionID string, req Request) error {
 	char := s.charManager.GetCurrent()
 	if char == nil {
 		return s.sendError(sessionID, req.Action, "no active character")
+	}
+
+	// 用户一说话，就顺手记一笔活动记录，
+	// 同时触发一次主动性“即时评估”。
+	s.recordUserActivity(sessionID, chatReq.Text)
+	if s.proactiveManager != nil {
+		s.proactiveManager.Trigger("user_message")
 	}
 
 	inbound := bus.InboundMessage{
@@ -808,6 +872,18 @@ func (s *PetService) handleConfigUpdate(sessionID string, req Request) error {
 	if data.ProactiveIntervalMinutes != nil {
 		cfg.ProactiveIntervalMinutes = *data.ProactiveIntervalMinutes
 	}
+	if data.WeeklyReportEnabled != nil {
+		cfg.WeeklyReportEnabled = *data.WeeklyReportEnabled
+	}
+	if data.ProgressNudgeEnabled != nil {
+		cfg.ProgressNudgeEnabled = *data.ProgressNudgeEnabled
+	}
+	if data.ProactiveCheckMinutes != nil {
+		cfg.ProactiveCheckMinutes = *data.ProactiveCheckMinutes
+	}
+	if data.GlobalCooldownMinutes != nil {
+		cfg.GlobalCooldownMinutes = *data.GlobalCooldownMinutes
+	}
 	if data.VoiceEnabled != nil {
 		cfg.VoiceEnabled = *data.VoiceEnabled
 	}
@@ -923,6 +999,56 @@ func (s *PetService) sendPush(sessionID, pushType string, data interface{}) erro
 	}
 	s.pushHandler(push)
 	return nil
+}
+
+func (s *PetService) deliverProactiveIntent(intent proactive.Intent, level proactive.DeliveryLevel) error {
+	if s == nil || s.proactiveManager == nil {
+		return nil
+	}
+
+	sessionID := ""
+	s.mu.RLock()
+	for _, sid := range s.connSessions {
+		sessionID = sid
+		break
+	}
+	s.mu.RUnlock()
+	if sessionID == "" {
+		return nil
+	}
+
+	var pushType string
+	switch intent.Type {
+	case "weekly_report":
+		pushType = PushTypeWeeklyReport
+	case "progress_nudge":
+		pushType = PushTypeProgressNudge
+	default:
+		return nil
+	}
+
+	payload := map[string]any{
+		"delivery_level": string(level),
+	}
+	for k, v := range intent.Payload {
+		payload[k] = v
+	}
+
+	eventID := ""
+	if id, ok := intent.Payload["report_id"].(string); ok {
+		eventID = id
+	}
+	if id, ok := intent.Payload["nudge_id"].(string); ok && eventID == "" {
+		eventID = id
+	}
+	if eventID == "" {
+		eventID = intent.Type + "-" + time.Now().Format("20060102150405")
+	}
+
+	if err := s.sendPush(sessionID, pushType, payload); err != nil {
+		return err
+	}
+	return s.proactiveManager.RecordDelivery(intent.Type, eventID, s.charManager.GetCurrentID())
 }
 
 func (s *PetService) AppConfig() *petconfig.AppConfig {

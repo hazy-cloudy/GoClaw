@@ -61,6 +61,8 @@ ActionASRModelSetDefault  = "asr_model_set_default"  // 设置默认 ASR 模型
 	ActionAudioFrame           = "audio_frame"             // 音频帧（语音输入）
 	ActionVoiceConfigGet       = "voice_config_get"        // 获取 voice 配置（model_name）
 	ActionVoiceConfigUpdate    = "voice_config_update"     // 更新 voice 配置（model_name）
+	PushTypeWeeklyReport  = "weekly_report_ready"
+	PushTypeProgressNudge = "progress_nudge"
 )
 
 // =============================================================================
@@ -192,6 +194,10 @@ type ConfigUpdateRequest struct {
 	ReminderEnabled          *bool   `json:"reminder_enabled"`           // 是否启用提醒
 	ProactiveCare            *bool   `json:"proactive_care"`             // 是否启用主动关怀
 	ProactiveIntervalMinutes *int    `json:"proactive_interval_minutes"` // 主动关怀间隔（分钟）
+	WeeklyReportEnabled      *bool   `json:"weekly_report_enabled"`      // 是否启用每周总结
+	ProgressNudgeEnabled     *bool   `json:"progress_nudge_enabled"`     // 是否启用未完成事项轻催
+	ProactiveCheckMinutes    *int    `json:"proactive_check_minutes"`    // 主动后台检查周期（分钟）
+	GlobalCooldownMinutes    *int    `json:"global_cooldown_minutes"`    // 主动事件全局冷却（分钟）
 	VoiceEnabled             *bool   `json:"voice_enabled"`              // 是否启用语音
 	ASREnabled               *bool   `json:"asr_enabled"`                // 是否启用 ASR 语音识别
 	Language                 *string `json:"language"`                   // 语言设置

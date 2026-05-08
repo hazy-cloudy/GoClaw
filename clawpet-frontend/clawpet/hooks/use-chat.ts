@@ -84,6 +84,19 @@ interface ToolStatusEventData {
   text?: string
 }
 
+interface WeeklyReportEventData {
+  title?: string
+  summary?: string
+  report_id?: string
+}
+
+interface ProgressNudgeEventData {
+  topic?: string
+  summary?: string
+  suggestion?: string
+  nudge_id?: string
+}
+
 const EMPTY_SESSION_TITLE = "新对话"
 
 function generateChatSessionKey(): string {
@@ -1004,6 +1017,40 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
             lastEmotionRef.current = event.data.trim()
           }
           break
+
+        case "weekly_report": {
+          const data = event.data as WeeklyReportEventData | undefined
+          const title = String(data?.title || "本周陪跑回顾")
+          const summary = String(data?.summary || "我把这周的记录整理好了。")
+          const message: ChatMessage = {
+            id: data?.report_id || `weekly-report-${Date.now()}`,
+            role: "system",
+            content: `${title}\n${summary}`,
+            timestamp: Date.now(),
+          }
+          updateSessionMessages(activeSessionIdRef.current, (prev) =>
+            mergeMessage(prev, message),
+          )
+          showBubble(summary)
+          break
+        }
+
+        case "progress_nudge": {
+          const data = event.data as ProgressNudgeEventData | undefined
+          const summary = String(data?.summary || "上次的事情还有没收口的部分。")
+          const suggestion = String(data?.suggestion || "要不要现在顺手收一下？")
+          const message: ChatMessage = {
+            id: data?.nudge_id || `progress-nudge-${Date.now()}`,
+            role: "system",
+            content: `${summary}\n${suggestion}`,
+            timestamp: Date.now(),
+          }
+          updateSessionMessages(activeSessionIdRef.current, (prev) =>
+            mergeMessage(prev, message),
+          )
+          showBubble(summary)
+          break
+        }
 
         case "action_trigger":
           break
