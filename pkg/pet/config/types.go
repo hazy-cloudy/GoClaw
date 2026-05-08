@@ -26,6 +26,10 @@ type AppConfig struct {
 	ReminderEnabled          bool   `json:"reminder_enabled"`           // 是否启用提醒
 	ProactiveCare            bool   `json:"proactive_care"`             // 是否启用主动关怀
 	ProactiveIntervalMinutes int    `json:"proactive_interval_minutes"` // 主动关怀间隔（分钟）
+	WeeklyReportEnabled      bool   `json:"weekly_report_enabled"`      // 是否启用每周总结
+	ProgressNudgeEnabled     bool   `json:"progress_nudge_enabled"`     // 是否启用未完成事项轻催
+	ProactiveCheckMinutes    int    `json:"proactive_check_minutes"`    // 主动后台检查周期（分钟）
+	GlobalCooldownMinutes    int    `json:"global_cooldown_minutes"`    // 主动事件全局冷却（分钟）
 	VoiceEnabled             bool   `json:"voice_enabled"`              // 是否启用语音播报
 	ASREnabled               bool   `json:"asr_enabled"`                // 是否启用语音识别
 	Language                 string `json:"language"`                   // 语言设置
@@ -38,6 +42,10 @@ func DefaultAppConfig() *AppConfig {
 		ReminderEnabled:          true,
 		ProactiveCare:            true,
 		ProactiveIntervalMinutes: 30,
+		WeeklyReportEnabled:      true,
+		ProgressNudgeEnabled:     true,
+		ProactiveCheckMinutes:    30,
+		GlobalCooldownMinutes:    90,
 		VoiceEnabled:             false,
 		Language:                 "zh-CN",
 	}
