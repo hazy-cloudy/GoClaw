@@ -19,6 +19,8 @@ const PUSH_TYPE_TEXT_AND_AUDIO = "text_and_audio"
 const PUSH_TYPE_ASR = "asr"
 const PUSH_TYPE_EMOTION_CHANGE = "emotion_change"
 const PUSH_TYPE_ACTION_TRIGGER = "action_trigger"
+const PUSH_TYPE_WEEKLY_REPORT = "weekly_report_ready"
+const PUSH_TYPE_PROGRESS_NUDGE = "progress_nudge"
 
 export interface ChatMessage {
   id: string
@@ -140,6 +142,8 @@ export type WSEventType =
   | "reconnecting"
   | "emotion_change"
   | "action_trigger"
+  | "weekly_report"
+  | "progress_nudge"
 
 export interface WSEvent {
   type: WSEventType
@@ -474,6 +478,12 @@ export class PicoClawWebSocket {
         break
       case PUSH_TYPE_ACTION_TRIGGER:
         this.handleActionTriggerPush(data)
+        break
+      case PUSH_TYPE_WEEKLY_REPORT:
+        this.emit({ type: "weekly_report", data })
+        break
+      case PUSH_TYPE_PROGRESS_NUDGE:
+        this.emit({ type: "progress_nudge", data })
         break
       default:
         break
