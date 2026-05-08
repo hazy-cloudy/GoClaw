@@ -52,6 +52,19 @@ function copyIfDifferent(fromPath, toPath) {
   return true;
 }
 
+function resolveExistingBinary(distDir, candidateNames) {
+  for (const name of candidateNames) {
+    const fullPath = path.join(distDir, name);
+    if (statSafe(fullPath)) {
+      return { fullPath, name };
+    }
+  }
+  return {
+    fullPath: path.join(distDir, candidateNames[0]),
+    name: candidateNames[0],
+  };
+}
+
 function buildBinary(repoRoot, outputPath, target) {
   ensureDir(path.dirname(outputPath));
   execFileSync(
@@ -84,6 +97,7 @@ module.exports = async function beforePack() {
     {
       label: "gateway",
       outputName: "picoclaw.exe",
+      sourceNames: ["picoclaw.exe", "clawpet.exe"],
       buildTarget: "./cmd/picoclaw",
       sourceMtime: Math.max(
         sharedSourceMtime,
@@ -93,6 +107,7 @@ module.exports = async function beforePack() {
     {
       label: "launcher",
       outputName: "picoclaw-web.exe",
+      sourceNames: ["picoclaw-web.exe", "clawpet-web.exe"],
       buildTarget: "./web/backend",
       sourceMtime: Math.max(
         sharedSourceMtime,
@@ -102,7 +117,8 @@ module.exports = async function beforePack() {
   ];
 
   for (const binary of binaries) {
-    const distBinaryPath = path.join(distDir, binary.outputName);
+    const distBinary = resolveExistingBinary(distDir, binary.sourceNames || [binary.outputName]);
+    const distBinaryPath = distBinary.fullPath;
     const embeddedBinaryPath = path.join(projectDir, binary.outputName);
 
     const distStat = statSafe(distBinaryPath);
@@ -119,7 +135,9 @@ module.exports = async function beforePack() {
 
     const copied = copyIfDifferent(distBinaryPath, embeddedBinaryPath);
     if (copied) {
-      console.log(`[beforePack] synced ${binary.outputName} into Electron resources`);
+      console.log(
+        `[beforePack] synced ${distBinary.name} into Electron resources as ${binary.outputName}`,
+      );
     } else {
       console.log(`[beforePack] ${binary.outputName} already up to date`);
     }
