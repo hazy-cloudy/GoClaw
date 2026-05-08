@@ -25,6 +25,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/health"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	ppid "github.com/sipeed/picoclaw/pkg/pid"
+	"github.com/sipeed/picoclaw/pkg/processutil"
 	"github.com/sipeed/picoclaw/web/backend/utils"
 )
 
@@ -630,6 +631,7 @@ func (h *Handler) startGatewayLocked(initialStatus string, existingPid int) (int
 	logger.InfoC("gateway", fmt.Sprintf("Starting gateway process (%s)", execPath))
 
 	cmd = exec.Command(execPath, h.gatewayCommandArgs()...)
+	processutil.PrepareBackgroundCommand(cmd)
 	cmd.Env = os.Environ()
 	// Forward the launcher's config path via the environment variable that
 	// GetConfigPath() already reads, so the gateway sub-process uses the same

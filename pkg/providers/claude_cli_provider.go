@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"github.com/sipeed/picoclaw/pkg/processutil"
 )
 
 // ClaudeCliProvider implements LLMProvider using the claude CLI as a subprocess.
@@ -43,6 +45,7 @@ func (p *ClaudeCliProvider) Chat(
 	if p.workspace != "" {
 		cmd.Dir = p.workspace
 	}
+	processutil.PrepareBackgroundCommand(cmd)
 	cmd.Stdin = bytes.NewReader([]byte(prompt))
 
 	var stdout, stderr bytes.Buffer

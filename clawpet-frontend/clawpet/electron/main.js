@@ -1843,6 +1843,7 @@ async function startLauncher(exePath, workDir) {
       cwd: workDir,
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
       env: childEnv,
     });
     
@@ -1928,6 +1929,7 @@ async function startGateway(exePath, workDir) {
       cwd: workDir,
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
       env: childEnv,
     });
     
