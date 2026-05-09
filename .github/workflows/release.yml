@@ -127,6 +127,8 @@ jobs:
           # Run go generate to copy workspace to onboard directory
           go generate ./cmd/picoclaw/internal/onboard
 
+          test -f cmd/picoclaw/internal/onboard/workspace/skills/pptx/SKILL.md
+
       - name: Build
         shell: bash
         run: |
@@ -315,6 +317,8 @@ jobs:
           
           # Run go generate to copy workspace to onboard directory
           go generate ./cmd/picoclaw/internal/onboard
+
+          test -f cmd/picoclaw/internal/onboard/workspace/skills/pptx/SKILL.md
 
       - name: Build Go Binaries
         shell: bash
