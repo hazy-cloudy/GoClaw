@@ -24,7 +24,7 @@
       "electron/**/*",
       "public/**/*"
     ],
-    "asar": true,
+    "asar": false,
     "asarUnpack": [
       "**/*.node",
       ".next/**/*",

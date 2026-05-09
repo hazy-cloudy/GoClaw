@@ -13,7 +13,7 @@ type Manager struct {
 	interruptibility *InterruptibilityEvaluator
 	policy           *PolicyEngine
 	history          *HistoryStore
-	buildSnapshot    func() Snapshot
+	buildSnapshot    func(string) Snapshot
 	providers        []Provider
 	deliver          func(Intent, DeliveryLevel) error
 	lastPushAt       time.Time
@@ -27,8 +27,8 @@ type Manager struct {
 //
 // 后续真正接入 weekly_report / progress_nudge provider 时，
 // 也是从这里继续往下扩。
-func NewManager(history *HistoryStore, buildSnapshot func() Snapshot, providers []Provider, deliver func(Intent, DeliveryLevel) error) *Manager {
-	return &Manager{
+func NewManager(history *HistoryStore, buildSnapshot func(string) Snapshot, providers []Provider, deliver func(Intent, DeliveryLevel) error) *Manager {
+	mgr := &Manager{
 		interruptibility: NewInterruptibilityEvaluator(),
 		policy:           NewPolicyEngine(),
 		history:          history,
@@ -36,6 +36,13 @@ func NewManager(history *HistoryStore, buildSnapshot func() Snapshot, providers 
 		providers:        providers,
 		deliver:          deliver,
 	}
+	if history != nil {
+		if records, err := history.List(); err == nil && len(records) > 0 {
+			last := records[len(records)-1].DeliveredAt
+			mgr.lastPushAt = last
+		}
+	}
+	return mgr
 }
 
 // Start 启动后台周期性检查。
@@ -52,11 +59,13 @@ func (m *Manager) Start(ctx context.Context) {
 		return
 	}
 
-	initialSnapshot := m.buildSnapshot()
+	initialSnapshot := m.buildSnapshot("scheduled_tick")
 	interval := time.Duration(initialSnapshot.Preferences.ProactiveCheckMinutes) * time.Minute
 	if interval <= 0 {
 		interval = 30 * time.Minute
 	}
+
+	m.evaluate("scheduled_tick")
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -84,7 +93,7 @@ func (m *Manager) Trigger(reason string) {
 // evaluate 是主动性底座里的核心评估入口。
 // 这里会依次跑：snapshot -> interruptibility -> policy -> providers -> delivery。
 func (m *Manager) evaluate(reason string) {
-	snapshot := m.buildSnapshot()
+	snapshot := m.buildSnapshot(reason)
 	interruptibility := m.interruptibility.Evaluate(snapshot)
 	policy := m.policy.Evaluate(snapshot, interruptibility)
 	logger.DebugCF("pet", "proactive evaluated", map[string]any{

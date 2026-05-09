@@ -107,9 +107,16 @@ func BuildSnapshot(now time.Time, deps SnapshotDependencies) Snapshot {
 					if ev.CreatedAt.After(snap.Activity.LastUserMessageAt) {
 						snap.Activity.LastUserMessageAt = ev.CreatedAt
 					}
+				case activity.EventToolCall:
+					snap.Activity.RecentTaskCount++
 				case activity.EventTaskResult:
 					snap.Activity.RecentTaskCount++
 					if ev.Status == activity.StatusPending || ev.Status == activity.StatusFailed {
+						snap.Activity.UnfinishedTaskCount++
+					}
+				case activity.EventToolResult:
+					if ev.Status == activity.StatusFailed {
+						snap.Activity.RecentTaskCount++
 						snap.Activity.UnfinishedTaskCount++
 					}
 				}
