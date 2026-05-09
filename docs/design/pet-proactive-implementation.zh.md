@@ -26,7 +26,7 @@
 - `weekly_report`
 - `progress_nudge`
 - delivery history / cooldown
-- push 协议与前端基础展示
+- push 协议与后端定向投递
 
 ### 不包含
 
@@ -175,6 +175,19 @@ type ActivityEvent struct {
 - `file_output`
 - 输出路径
 - 对应任务摘要
+
+#### D. 一次性定时任务写入时
+
+对于 `cron add` 产生的单次 `at` 任务，额外写入一条 `task_result/pending` 到 activity：
+
+- `schedule_kind = "at"`
+- `at_ms`
+- `due_at_ms`
+- `due_at`
+- `job_id`
+- `job_name`
+
+这样主动提醒可以真正基于“任务最后时间点”做判断，而不是只靠聊天文本。
 
 ---
 
@@ -558,7 +571,8 @@ type WeeklyReport struct {
 
 - `progress_nudge_enabled == true`
 - 存在未完成事项
-- 距离上次同类提醒超过冷却
+- 当前事项属于“一次性 deadline 型任务”，而不是 `every/cron` 周期任务
+- 距离上次同事项提醒超过冷却
 - 当前用户可打扰
 - 最近没有刚收到其他主动事件
 
@@ -569,8 +583,40 @@ type WeeklyReport struct {
 - `task_result` with `pending`
 - `task_result` with `failed`
 - 同主题在 24 小时内反复出现但没有 `done`
+- `Meta.schedule_kind in {"at"}` 的任务会进入主动提醒池
+- `Meta.schedule_kind in {"every","cron"}` 的任务不进入主动提醒池
 
-### 10.3 数据结构
+### 10.3 首次提醒时机
+
+不直接按“创建了多久”提醒，而是尽量按任务的目标时间距离决定首次提醒。
+
+优先读取：
+
+- `Meta.due_at`
+- `Meta.due_at_ms`
+- `Meta.at_ms`
+
+如果没有 deadline 信息，才退回到 `CreatedAt` 做近似判断。
+
+首次提醒延迟的第一版规则：
+
+- 距离 deadline `>= 30 天`：首次提醒在 `7 天前`
+- 距离 deadline `>= 7 天`：首次提醒在 `1 天前`
+- 距离 deadline `>= 1 天`：首次提醒在 `6 小时前`
+- 距离 deadline `>= 6 小时`：首次提醒在 `90 分钟前`
+- 更近的任务：首次提醒在 `30 分钟前`
+
+### 10.4 提醒次数与冷却
+
+每个事件最多 3 次提醒：
+
+1. 首次提醒：按时间距离规则触发
+2. 第二次提醒：基于首次延迟的指数退避
+3. 第三次提醒：在任务最后时间点兜底再提醒一次
+
+如果用户在第一次提醒之后、deadline 之前有新的消息交互，则第二次中间提醒直接跳过，只保留最后一次 deadline 提醒。
+
+### 10.5 数据结构
 
 ```go
 type ProgressNudge struct {
@@ -584,7 +630,7 @@ type ProgressNudge struct {
 }
 ```
 
-### 10.4 文案策略
+### 10.6 文案策略
 
 只输出两层信息：
 
@@ -593,18 +639,20 @@ type ProgressNudge struct {
 
 避免长篇说教。
 
-### 10.5 Intent
+### 10.7 Intent
 
 ```go
 {
   "type": "progress_nudge",
   "priority": "low",
-  "reason_codes": ["unfinished_tasks", "user_idle"],
+  "reason_codes": ["unfinished_tasks", "time_distance_ready"],
   "payload": {
     "nudge_id": "...",
-    "topic": "pptx 依赖问题",
-    "summary": "你上次卡在 pptx 依赖上，还没彻底收口。",
-    "suggestion": "要不要先把依赖预检补掉？"
+    "event_id": "...",
+    "topic": "明天讲 PPT",
+    "summary": "明天讲 PPT 这件事还没有收口。",
+    "suggestion": "要不要先把这件事收一下？",
+    "reminder_count": 1
   }
 }
 ```

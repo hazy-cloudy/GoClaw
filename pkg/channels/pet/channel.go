@@ -123,6 +123,9 @@ type petConn struct {
 // configPath: picoclaw 主配置路径，用于模型配置管理
 func NewPetChannel(cfg config.PetConfig, msgBus *bus.MessageBus, workspacePath string, systemConfig *config.Config, configPath string) (*PetChannel, error) {
 	ctx, cancel := context.WithCancel(context.Background())
+	logger.InfoCF("pet", "NewPetChannel called", map[string]any{
+		"workspace_path_empty": workspacePath == "",
+	})
 
 	base := channels.NewBaseChannel("pet", cfg, msgBus, cfg.AllowFrom)
 
@@ -193,7 +196,20 @@ func (c *PetChannel) handleServicePush(push any) {
 	c.connsMu.RLock()
 	defer c.connsMu.RUnlock()
 
+	targetSessionID := ""
+	switch v := push.(type) {
+	case Push:
+	case *Push:
+	case map[string]any:
+		if sessionID, ok := v["session_id"].(string); ok {
+			targetSessionID = sessionID
+		}
+	}
+
 	for _, pc := range c.connections {
+		if targetSessionID != "" && pc.sessionID != targetSessionID {
+			continue
+		}
 		if err := pc.writeJSON(push); err != nil {
 			logger.Warnf("pet: failed to push to conn_id=%s: %v", pc.id, err)
 		}

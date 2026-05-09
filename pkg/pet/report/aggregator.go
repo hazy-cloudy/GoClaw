@@ -20,16 +20,33 @@ func AggregateWeeklyReport(characterID string, events []*activity.Event, now tim
 	}
 
 	categoryCounts := map[string]int{}
-	outputs := make([]string, 0, 4)
-	unfinished := make([]string, 0, 4)
+	outputs := make([]string, 0, 5)
+	unfinished := make([]string, 0, 5)
 	peakByDay := map[string]int{}
 	peakByHour := map[int]int{}
+	activeDays := map[string]struct{}{}
+	sessions := map[string]struct{}{}
 
 	for _, ev := range events {
+		if ev == nil {
+			continue
+		}
 		categoryCounts[string(ev.Category)]++
 		dayKey := ev.CreatedAt.Format("2006-01-02")
 		peakByDay[dayKey]++
 		peakByHour[ev.CreatedAt.Hour()]++
+		activeDays[dayKey] = struct{}{}
+		if ev.SessionID != "" {
+			sessions[ev.SessionID] = struct{}{}
+		}
+		if report.FirstActiveAt == nil || ev.CreatedAt.Before(*report.FirstActiveAt) {
+			t := ev.CreatedAt
+			report.FirstActiveAt = &t
+		}
+		if report.LastActiveAt == nil || ev.CreatedAt.After(*report.LastActiveAt) {
+			t := ev.CreatedAt
+			report.LastActiveAt = &t
+		}
 
 		switch ev.Type {
 		case activity.EventUserMessage:
@@ -38,28 +55,37 @@ func AggregateWeeklyReport(characterID string, events []*activity.Event, now tim
 			report.ToolCallCount++
 		case activity.EventTaskResult:
 			report.TaskCount++
+			if ev.Status == activity.StatusDone {
+				report.TaskDoneCount++
+			}
 			if ev.Status == activity.StatusFailed {
 				report.FailureCount++
 			}
 			if ev.Status == activity.StatusPending || ev.Status == activity.StatusFailed {
 				if ev.Title != "" {
-					unfinished = appendIfMissing(unfinished, ev.Title, 3)
+					unfinished = appendIfMissing(unfinished, ev.Title, 5)
 				}
 			}
 			if ev.Status == activity.StatusDone && ev.Title != "" {
-				outputs = appendIfMissing(outputs, ev.Title, 3)
+				outputs = appendIfMissing(outputs, ev.Title, 5)
 			}
 		case activity.EventFileOutput:
 			if ev.Title != "" {
-				outputs = appendIfMissing(outputs, ev.Title, 3)
+				outputs = appendIfMissing(outputs, ev.Title, 5)
 			}
 		case activity.EventToolResult:
 			if ev.Status == activity.StatusFailed {
 				report.FailureCount++
+				report.ToolErrorCount++
 			}
 		}
 	}
 
+	report.ActiveDays = len(activeDays)
+	report.SessionCount = len(sessions)
+	if report.TaskCount > 0 {
+		report.CompletionRate = int(float64(report.TaskDoneCount) / float64(report.TaskCount) * 100)
+	}
 	report.TopCategories = topCategories(categoryCounts, 3)
 	report.Outputs = outputs
 	report.Unfinished = unfinished
@@ -127,15 +153,17 @@ func topHour(counts map[int]int) int {
 
 func buildSummary(report WeeklyReport) string {
 	if len(report.TopCategories) == 0 {
-		return "这周使用还不多，我先记下了，等你多使唤我一点再来给你做像样的回顾。"
+		return "杩欏懆浣跨敤杩樹笉澶氾紝鎴戝厛璁颁笅浜嗭紝绛変綘澶氫娇鍞ゆ垜涓€鐐瑰啀鏉ョ粰浣犲仛鍍忔牱鐨勫洖椤俱€?"
 	}
 	secondCategory := report.TopCategories[0].Name
 	if len(report.TopCategories) > 1 {
 		secondCategory = report.TopCategories[1].Name
 	}
 	return fmt.Sprintf(
-		"这周你一共让我出手 %d 次，主要集中在 %s、%s 这几类事情上。",
+		"杩欏懆浣犱竴鍏辫鎴戝嚭鎵?%d 娆★紝瀹屾垚鐜?%d%%锛屾椿璺?%d 澶╋紝涓昏闆嗕腑鍦?%s銆?%s 杩欏嚑绫讳簨鎯呬笂銆?",
 		report.TaskCount,
+		report.CompletionRate,
+		report.ActiveDays,
 		report.TopCategories[0].Name,
 		secondCategory,
 	)

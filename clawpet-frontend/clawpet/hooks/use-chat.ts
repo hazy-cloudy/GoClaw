@@ -220,6 +220,17 @@ function buildOutgoingMessage(raw: string): string {
   return raw.trim()
 }
 
+function shouldSuppressChatError(message: string): boolean {
+  const normalized = message.trim().toLowerCase()
+  if (!normalized) {
+    return true
+  }
+  return (
+    normalized.includes("weekly report provider did not produce intent") ||
+    normalized.includes("progress nudge provider did not produce intent")
+  )
+}
+
 function decodeBase64Chunk(value: string): Uint8Array | null {
   let base64 = value
     .replace(/^data:audio\/[^;]+;base64,/, "")
@@ -999,6 +1010,9 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         case "error": {
           const errorMsg =
             typeof event.data === "string" ? event.data : "Unknown error"
+          if (shouldSuppressChatError(errorMsg)) {
+            break
+          }
           setError(errorMsg)
           finalizeStreamingAssistantMessages()
           endAssistantTurn()
@@ -1017,40 +1031,6 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
             lastEmotionRef.current = event.data.trim()
           }
           break
-
-        case "weekly_report": {
-          const data = event.data as WeeklyReportEventData | undefined
-          const title = String(data?.title || "本周陪跑回顾")
-          const summary = String(data?.summary || "我把这周的记录整理好了。")
-          const message: ChatMessage = {
-            id: data?.report_id || `weekly-report-${Date.now()}`,
-            role: "system",
-            content: `${title}\n${summary}`,
-            timestamp: Date.now(),
-          }
-          updateSessionMessages(activeSessionIdRef.current, (prev) =>
-            mergeMessage(prev, message),
-          )
-          showBubble(summary)
-          break
-        }
-
-        case "progress_nudge": {
-          const data = event.data as ProgressNudgeEventData | undefined
-          const summary = String(data?.summary || "上次的事情还有没收口的部分。")
-          const suggestion = String(data?.suggestion || "要不要现在顺手收一下？")
-          const message: ChatMessage = {
-            id: data?.nudge_id || `progress-nudge-${Date.now()}`,
-            role: "system",
-            content: `${summary}\n${suggestion}`,
-            timestamp: Date.now(),
-          }
-          updateSessionMessages(activeSessionIdRef.current, (prev) =>
-            mergeMessage(prev, message),
-          )
-          showBubble(summary)
-          break
-        }
 
         case "action_trigger":
           break

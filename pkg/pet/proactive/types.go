@@ -25,7 +25,8 @@ const (
 // 它的作用是把原本分散在 pet / userprofile / activity / config 里的信息
 // 收敛成一个统一输入，避免每个事件 provider 自己去东拼西凑状态。
 type Snapshot struct {
-	Now time.Time `json:"now"`
+	Now              time.Time `json:"now"`
+	EvaluationReason string    `json:"evaluation_reason,omitempty"`
 
 	Pet struct {
 		CharacterID     string `json:"character_id"`
@@ -52,6 +53,7 @@ type Snapshot struct {
 		RecentMessageCount  int       `json:"recent_message_count"`
 		RecentTaskCount     int       `json:"recent_task_count"`
 		UnfinishedTaskCount int       `json:"unfinished_task_count"`
+		ActiveSessionID     string    `json:"active_session_id"`
 		CurrentSessionBusy  bool      `json:"current_session_busy"`
 		ConsoleVisible      bool      `json:"console_visible"`
 		PetVisible          bool      `json:"pet_visible"`
@@ -95,5 +97,6 @@ type DeliveryHistoryRecord struct {
 	EventType   string    `json:"event_type"`
 	EventID     string    `json:"event_id"`
 	CharacterID string    `json:"character_id"`
+	SessionID   string    `json:"session_id,omitempty"`
 	DeliveredAt time.Time `json:"delivered_at"`
 }

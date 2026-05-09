@@ -64,3 +64,27 @@ func (s *HistoryStore) Append(record DeliveryHistoryRecord) error {
 	}
 	return nil
 }
+
+func (s *HistoryStore) FindByEvent(eventType, eventID, characterID, sessionID string) ([]DeliveryHistoryRecord, error) {
+	records, err := s.List()
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]DeliveryHistoryRecord, 0, len(records))
+	for _, record := range records {
+		if eventType != "" && record.EventType != eventType {
+			continue
+		}
+		if eventID != "" && record.EventID != eventID {
+			continue
+		}
+		if characterID != "" && record.CharacterID != characterID {
+			continue
+		}
+		if sessionID != "" && record.SessionID != "" && record.SessionID != sessionID {
+			continue
+		}
+		filtered = append(filtered, record)
+	}
+	return filtered, nil
+}

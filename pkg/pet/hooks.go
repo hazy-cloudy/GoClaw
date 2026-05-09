@@ -414,6 +414,9 @@ func (h *PetHook) BeforeTool(ctx context.Context, call *agent.ToolCallHookReques
 	})
 
 	h.pushToolExecStart(call.Tool, call.Arguments)
+	if h.petService != nil {
+		h.petService.recordToolCallActivity(call.ChatID, call.Tool, call.Arguments)
+	}
 
 	return call, agent.HookDecision{Action: agent.HookActionContinue}, nil
 }
@@ -431,6 +434,9 @@ func (h *PetHook) AfterTool(ctx context.Context, result *agent.ToolResultHookRes
 	})
 
 	h.pushToolExecEnd(result.Tool, result.Result)
+	if h.petService != nil {
+		h.petService.recordToolResultActivity(result.ChatID, result.Tool, result.Result)
+	}
 
 	return result, agent.HookDecision{Action: agent.HookActionContinue}, nil
 }

@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -57,6 +58,8 @@ type CronStore struct {
 
 type JobHandler func(job *CronJob) (string, error)
 
+var ErrJobDeferred = errors.New("cron job deferred")
+
 type CronService struct {
 	storePath string
 	store     *CronStore
@@ -67,6 +70,9 @@ type CronService struct {
 	wakeChan  chan struct{}
 	gronx     *gronx.Gronx
 }
+
+const oneTimeJobDedupWindow = 60 * 1000
+const deferredRetryInterval = 15 * time.Second
 
 func NewCronService(storePath string, onJob JobHandler) *CronService {
 	cs := &CronService{
@@ -261,6 +267,18 @@ func (cs *CronService) executeJobByID(jobID string) {
 	job.State.LastRunAtMS = &startTime
 	job.UpdatedAtMS = time.Now().UnixMilli()
 
+	if errors.Is(err, ErrJobDeferred) {
+		job.State.LastStatus = "deferred"
+		job.State.LastError = err.Error()
+		retryAt := time.Now().Add(deferredRetryInterval).UnixMilli()
+		job.State.NextRunAtMS = &retryAt
+		log.Printf("[cron] job '%s' deferred after %dms: %v", job.Name, execDuration, err)
+		if err := cs.saveStoreUnsafe(); err != nil {
+			log.Printf("[cron] failed to save store: %v", err)
+		}
+		return
+	}
+
 	if err != nil {
 		job.State.LastStatus = "error"
 		job.State.LastError = err.Error()
@@ -303,7 +321,7 @@ func (cs *CronService) executeJobByID(jobID string) {
 func (cs *CronService) computeNextRun(schedule *CronSchedule, nowMS int64) *int64 {
 	switch schedule.Kind {
 	case "at":
-		if schedule.AtMS != nil && *schedule.AtMS > nowMS {
+		if schedule.AtMS != nil {
 			return schedule.AtMS
 		}
 		return nil
@@ -318,7 +336,6 @@ func (cs *CronService) computeNextRun(schedule *CronSchedule, nowMS int64) *int6
 			return nil
 		}
 
-		// Use gronx to calculate next run time
 		now := time.UnixMilli(nowMS)
 		nextTime, err := gronx.NextTickAfter(schedule.Expr, now, false)
 		if err != nil {
@@ -415,6 +432,11 @@ func (cs *CronService) AddJob(
 
 	now := time.Now().UnixMilli()
 
+	if existing := cs.findDuplicateOneTimeJob(schedule, message, channel, to); existing != nil {
+		jobCopy := *existing
+		return &jobCopy, nil
+	}
+
 	// One-time tasks (at) should be deleted after execution
 	deleteAfterRun := (schedule.Kind == "at")
 
@@ -445,6 +467,32 @@ func (cs *CronService) AddJob(
 	cs.notify()
 
 	return &job, nil
+}
+
+func (cs *CronService) findDuplicateOneTimeJob(
+	schedule CronSchedule,
+	message string,
+	channel string,
+	to string,
+) *CronJob {
+	if schedule.Kind != "at" || schedule.AtMS == nil {
+		return nil
+	}
+	targetAtMS := *schedule.AtMS
+	for i := range cs.store.Jobs {
+		job := &cs.store.Jobs[i]
+		if !job.Enabled || job.Schedule.Kind != "at" || job.Schedule.AtMS == nil {
+			continue
+		}
+		if job.Payload.Channel != channel || job.Payload.To != to || job.Payload.Message != message {
+			continue
+		}
+		if absInt64(*job.Schedule.AtMS-targetAtMS) > oneTimeJobDedupWindow {
+			continue
+		}
+		return job
+	}
+	return nil
 }
 
 func (cs *CronService) UpdateJob(job *CronJob) error {
@@ -566,4 +614,11 @@ func generateID() string {
 		return fmt.Sprintf("%d", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(b)
+}
+
+func absInt64(v int64) int64 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }

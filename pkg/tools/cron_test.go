@@ -239,8 +239,8 @@ func TestCronTool_ExecuteJobPublishesErrorWhenExecDisabled(t *testing.T) {
 	job.Payload.To = "direct"
 	job.Payload.Command = "df -h"
 
-	if got := tool.ExecuteJob(context.Background(), job); got != "ok" {
-		t.Fatalf("ExecuteJob() = %q, want ok", got)
+	if got, err := tool.ExecuteJob(context.Background(), job); err != nil || got != "ok" {
+		t.Fatalf("ExecuteJob() = %q, %v, want ok", got, err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -267,8 +267,8 @@ func TestCronTool_ExecuteJobPublishesAgentResponse(t *testing.T) {
 	job.Payload.To = "chat-1"
 	job.Payload.Message = "send me a poem"
 
-	if got := tool.ExecuteJob(context.Background(), job); got != "ok" {
-		t.Fatalf("ExecuteJob() = %q, want ok", got)
+	if got, err := tool.ExecuteJob(context.Background(), job); err != nil || got != "ok" {
+		t.Fatalf("ExecuteJob() = %q, %v, want ok", got, err)
 	}
 
 	if executor.lastKey != "cron-job-1" {
@@ -297,8 +297,8 @@ func TestCronTool_ExecuteJobSkipsEmptyAgentResponse(t *testing.T) {
 	job.Payload.To = "chat-1"
 	job.Payload.Message = "say nothing"
 
-	if got := tool.ExecuteJob(context.Background(), job); got != "ok" {
-		t.Fatalf("ExecuteJob() = %q, want ok", got)
+	if got, err := tool.ExecuteJob(context.Background(), job); err != nil || got != "ok" {
+		t.Fatalf("ExecuteJob() = %q, %v, want ok", got, err)
 	}
 
 	if executor.publishedResp != "" {
@@ -315,8 +315,8 @@ func TestCronTool_ExecuteJobSkipsWhenMessageToolAlreadySent(t *testing.T) {
 	job.Payload.To = "chat-1"
 	job.Payload.Message = "send weather"
 
-	if got := tool.ExecuteJob(context.Background(), job); got != "ok" {
-		t.Fatalf("ExecuteJob() = %q, want ok", got)
+	if got, err := tool.ExecuteJob(context.Background(), job); err != nil || got != "ok" {
+		t.Fatalf("ExecuteJob() = %q, %v, want ok", got, err)
 	}
 
 	if executor.publishedResp != "" {
@@ -336,12 +336,76 @@ func TestCronTool_ExecuteJobReturnsErrorWithoutPublish(t *testing.T) {
 	job.Payload.To = "chat-1"
 	job.Payload.Message = "do something"
 
-	got := tool.ExecuteJob(context.Background(), job)
-	if !strings.Contains(got, "agent failure") {
-		t.Fatalf("ExecuteJob() = %q, want error message", got)
+	got, err := tool.ExecuteJob(context.Background(), job)
+	if err == nil || !strings.Contains(err.Error(), "agent failure") {
+		t.Fatalf("ExecuteJob() = %q, %v, want error message", got, err)
 	}
 
 	if executor.publishedResp != "" {
 		t.Fatalf("unexpected publish on error path: %q", executor.publishedResp)
+	}
+}
+
+func TestCronTool_ExecuteJobResolvesPetOneTimeReminderTarget(t *testing.T) {
+	executor := &stubJobExecutor{response: "generated reply"}
+	tool := newTestCronToolWithExecutorAndConfig(t, executor, config.DefaultConfig())
+	tool.SetDeliveryTargetResolver(func(
+		_ context.Context,
+		job *cron.CronJob,
+		channel string,
+		chatID string,
+	) (string, string, error) {
+		if channel == "pet" && job.Schedule.Kind == "at" {
+			return channel, "session-active", nil
+		}
+		return channel, chatID, nil
+	})
+
+	at := time.Now().Add(time.Minute).UnixMilli()
+	job := &cron.CronJob{ID: "job-pet-at"}
+	job.Schedule = cron.CronSchedule{Kind: "at", AtMS: &at}
+	job.Payload.Channel = "pet"
+	job.Payload.To = "session-stale"
+	job.Payload.Message = "remind me later"
+
+	if got, err := tool.ExecuteJob(context.Background(), job); err != nil || got != "ok" {
+		t.Fatalf("ExecuteJob() = %q, %v, want ok", got, err)
+	}
+	if executor.lastChatID != "session-active" {
+		t.Fatalf("executor target chatID = %q, want session-active", executor.lastChatID)
+	}
+	if executor.publishedChatID != "session-active" {
+		t.Fatalf("published target chatID = %q, want session-active", executor.publishedChatID)
+	}
+}
+
+func TestCronTool_ExecuteJobDefersPetOneTimeReminderWithoutActiveSession(t *testing.T) {
+	executor := &stubJobExecutor{response: "generated reply"}
+	tool := newTestCronToolWithExecutorAndConfig(t, executor, config.DefaultConfig())
+	tool.SetDeliveryTargetResolver(func(
+		_ context.Context,
+		job *cron.CronJob,
+		channel string,
+		chatID string,
+	) (string, string, error) {
+		if channel == "pet" && job.Schedule.Kind == "at" {
+			return "", "", fmt.Errorf("%w: no active pet session", cron.ErrJobDeferred)
+		}
+		return channel, chatID, nil
+	})
+
+	at := time.Now().Add(time.Minute).UnixMilli()
+	job := &cron.CronJob{ID: "job-pet-deferred"}
+	job.Schedule = cron.CronSchedule{Kind: "at", AtMS: &at}
+	job.Payload.Channel = "pet"
+	job.Payload.To = "session-stale"
+	job.Payload.Message = "remind me later"
+
+	got, err := tool.ExecuteJob(context.Background(), job)
+	if err == nil || !strings.Contains(err.Error(), "no active pet session") {
+		t.Fatalf("ExecuteJob() = %q, %v, want deferred error", got, err)
+	}
+	if executor.lastPrompt != "" {
+		t.Fatalf("executor should not run on deferred reminder, got prompt %q", executor.lastPrompt)
 	}
 }

@@ -68,7 +68,6 @@ let bubbleWindowHeight = BUBBLE_WINDOW_DEFAULT_HEIGHT;
 const userDataPath = path.join(os.homedir(), '.picoclaw');
 app.setPath('userData', userDataPath);
 const onboardingStatePath = path.join(userDataPath, 'onboarding-state.json');
-
 if (!fs.existsSync(userDataPath)) {
   fs.mkdirSync(userDataPath, { recursive: true });
 }
@@ -423,11 +422,20 @@ async function startNextServer() {
     return;
   }
 
-  // Packaged app content lives under resources/app.asar.unpacked when asar is enabled,
-  // or under resources/app when asar is disabled.
-  const appDir = process.resourcesPath
-    ? path.join(process.resourcesPath, 'app.asar.unpacked')
-    : path.join(__dirname, '..');
+  // Packaged app content usually lives under resources/app.asar.unpacked when
+  // asar is enabled. When asar is disabled, electron-builder places files
+  // under resources/app instead. Keep both layouts supported so packaging can
+  // switch between them without breaking the embedded Next.js startup path.
+  const appDir = (() => {
+    if (!process.resourcesPath) {
+      return path.join(__dirname, '..');
+    }
+    const unpackedDir = path.join(process.resourcesPath, 'app.asar.unpacked');
+    if (fs.existsSync(unpackedDir)) {
+      return unpackedDir;
+    }
+    return path.join(process.resourcesPath, 'app');
+  })();
   const buildDir = path.join(appDir, '.next');
   const nextCliPath = path.join(appDir, 'node_modules', 'next', 'dist', 'bin', 'next');
 
@@ -1864,6 +1872,10 @@ async function startLauncher(exePath, workDir) {
     const checkLauncher = async () => {
       for (let i = 0; i < 30; i++) {
         await new Promise(r => setTimeout(r, 500));
+        if (!launcherProcess) {
+          reject(new Error('Launcher exited before becoming ready'));
+          return;
+        }
         try {
           const ready = await isHttpReady('http://127.0.0.1:18800/api/auth/status');
           if (ready) {
@@ -1950,6 +1962,10 @@ async function startGateway(exePath, workDir) {
     const checkGateway = async () => {
       for (let i = 0; i < 30; i++) {
         await new Promise(r => setTimeout(r, 500));
+        if (!gatewayProcess) {
+          reject(new Error('Gateway exited before becoming ready'));
+          return;
+        }
         try {
           const ready = await isHttpReady('http://127.0.0.1:18790/health');
           if (ready) {

@@ -14,8 +14,8 @@ import (
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/cron"
 	"github.com/sipeed/picoclaw/pkg/logger"
-	"github.com/sipeed/picoclaw/pkg/pet/activity"
 	"github.com/sipeed/picoclaw/pkg/pet/action"
+	"github.com/sipeed/picoclaw/pkg/pet/activity"
 	"github.com/sipeed/picoclaw/pkg/pet/asr"
 	"github.com/sipeed/picoclaw/pkg/pet/characters"
 	"github.com/sipeed/picoclaw/pkg/pet/compression"
@@ -27,6 +27,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/pet/userprofile"
 	"github.com/sipeed/picoclaw/pkg/pet/voice"
 	"github.com/sipeed/picoclaw/pkg/providers"
+	"github.com/sipeed/picoclaw/pkg/tools"
 )
 
 type PushHandler func(push any)
@@ -42,7 +43,7 @@ type PetService struct {
 	actionManager      *action.ActionManager
 	memoryStore        *memory.Store
 	voiceLoader        *voice.Loader
-	asrLoader         *asr.Loader
+	asrLoader          *asr.Loader
 	conversationStore  *compression.ConversationStore
 	compressionSvc     *compression.CompressionService
 	modelConfigManager *modelconfig.Manager
@@ -52,7 +53,11 @@ type PetService struct {
 	activityStore      *activity.Store
 	proactiveManager   *proactive.Manager
 
-	connSessions map[string]string
+	connSessions           map[string]string
+	activeSessionID        string
+	activeCharacterID      string
+	lastSessionActiveAt    time.Time
+	proactiveFollowUpTimer *time.Timer
 
 	mu sync.RWMutex
 
@@ -219,6 +224,7 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 		logger.DebugCF("pet", "PetService: cron service initialized, store=", map[string]any{
 			"store_path": cronStorePath,
 		})
+		s.syncCronJobsToActivity()
 		// 初始化 skills 管理器
 		if cfg.Config != nil {
 			var err error
@@ -231,14 +237,16 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 		}
 		// proactiveManager 是主动性系统的总入口。
 		// 当前先把快照、可打扰判断、policy 这几层底座跑通。
+		historyStore := proactive.NewHistoryStore(workspacePath)
 		providers := []proactive.Provider{
 			proactive.NewWeeklyReportProvider(s.activityStore, proactive.NewWeeklyReportStateStore(workspacePath)),
-			proactive.NewProgressNudgeProvider(),
+			proactive.NewProgressNudgeProvider(s.activityStore, historyStore),
 		}
 		s.proactiveManager = proactive.NewManager(
-			proactive.NewHistoryStore(workspacePath),
-			func() proactive.Snapshot {
-				return proactive.BuildSnapshot(time.Now(), proactive.SnapshotDependencies{
+			historyStore,
+			func(reason string) proactive.Snapshot {
+				now := time.Now()
+				snapshot := proactive.BuildSnapshot(now, proactive.SnapshotDependencies{
 					ActivityStore:      s.activityStore,
 					ConfigManager:      s.configManager,
 					UserProfileManager: s.userProfileManager,
@@ -250,6 +258,8 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 						return s.proactiveManager.LastPushAt()
 					},
 				})
+				snapshot.EvaluationReason = reason
+				return snapshot
 			},
 			providers,
 			func(intent proactive.Intent, level proactive.DeliveryLevel) error {
@@ -258,7 +268,77 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 		)
 	}
 
+	logger.InfoCF("pet", "PetService proactive dependencies", map[string]any{
+		"workspace_path_empty": workspacePath == "",
+		"activity_enabled":     s.activityStore != nil,
+		"proactive_enabled":    s.proactiveManager != nil,
+	})
+
 	return s, nil
+}
+
+func (s *PetService) syncCronJobsToActivity() {
+	if s == nil || s.cronService == nil || s.activityStore == nil || s.charManager == nil {
+		return
+	}
+	charID := s.charManager.GetCurrentID()
+	if charID == "" {
+		return
+	}
+	for _, job := range s.cronService.ListJobs(true) {
+		exists, err := s.hasActivityEvent("cron-" + job.ID)
+		if err != nil || exists {
+			continue
+		}
+		s.appendCronActivityEvent(charID, &job)
+	}
+}
+
+func (s *PetService) hasActivityEvent(eventID string) (bool, error) {
+	if s == nil || s.activityStore == nil || eventID == "" {
+		return false, nil
+	}
+	events, err := s.activityStore.ListRange(time.Now().AddDate(-1, 0, 0), time.Now().AddDate(1, 0, 0))
+	if err != nil {
+		return false, err
+	}
+	for _, ev := range events {
+		if ev != nil && ev.ID == eventID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (s *PetService) appendCronActivityEvent(characterID string, job *cron.CronJob) {
+	if s == nil || s.activityStore == nil || job == nil || characterID == "" {
+		return
+	}
+	if job.Schedule.Kind != "at" || job.Schedule.AtMS == nil {
+		return
+	}
+	at := time.UnixMilli(*job.Schedule.AtMS)
+	meta := map[string]any{
+		"schedule_kind": job.Schedule.Kind,
+		"job_id":        job.ID,
+		"job_name":      job.Name,
+		"message":       job.Payload.Message,
+		"at_ms":         *job.Schedule.AtMS,
+		"due_at_ms":     *job.Schedule.AtMS,
+		"due_at":        at.Format(time.RFC3339),
+	}
+	_ = s.activityStore.Append(&activity.Event{
+		ID:          "cron-" + job.ID,
+		CharacterID: characterID,
+		SessionID:   job.Payload.To,
+		Type:        activity.EventTaskResult,
+		Category:    activity.ClassifyText(job.Payload.Message),
+		Status:      activity.StatusPending,
+		Title:       job.Name,
+		Summary:     job.Payload.Message,
+		Meta:        meta,
+		CreatedAt:   time.UnixMilli(job.CreatedAtMS),
+	})
 }
 
 func (s *PetService) Start() {
@@ -295,6 +375,7 @@ func (s *PetService) Stop() {
 	if s.cancel != nil {
 		s.cancel()
 	}
+	s.stopProactiveFollowUpTimer()
 	if s.decayTicker != nil {
 		s.decayTicker.Stop()
 	}
@@ -365,7 +446,67 @@ func (s *PetService) Push(push any) {
 	}
 }
 
+func (s *PetService) stopProactiveFollowUpTimer() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.proactiveFollowUpTimer != nil {
+		s.proactiveFollowUpTimer.Stop()
+		s.proactiveFollowUpTimer = nil
+	}
+}
+
+func (s *PetService) scheduleProactiveFollowUp(reason string, delay time.Duration) {
+	if s == nil || s.proactiveManager == nil {
+		return
+	}
+	if delay <= 0 {
+		delay = 90 * time.Second
+	}
+	s.mu.Lock()
+	if s.proactiveFollowUpTimer != nil {
+		s.proactiveFollowUpTimer.Stop()
+	}
+	s.proactiveFollowUpTimer = time.AfterFunc(delay, func() {
+		if s.ctx != nil {
+			select {
+			case <-s.ctx.Done():
+				return
+			default:
+			}
+		}
+		s.proactiveManager.Trigger(reason)
+	})
+	s.mu.Unlock()
+}
+
 func (s *PetService) recordUserActivity(sessionID, text string) {
+	if s.activityStore == nil || s.charManager == nil {
+		logger.WarnCF("pet", "recordUserActivity skipped", map[string]any{
+			"activity_store_nil": s.activityStore == nil,
+			"char_manager_nil":   s.charManager == nil,
+		})
+		return
+	}
+	charID := s.charManager.GetCurrentID()
+	if charID == "" {
+		logger.WarnCF("pet", "recordUserActivity skipped", map[string]any{
+			"reason": "empty_character_id",
+		})
+		return
+	}
+	// 这里只记录最基础的一类活动：用户消息。
+	// 后续再逐步把 tool result / file output 也补进来。
+	if err := s.activityStore.Append(activity.BuildUserMessageEvent(charID, sessionID, text)); err != nil {
+		logger.WarnCF("pet", "PetService: failed to append activity event", map[string]any{"error": err.Error()})
+		return
+	}
+	logger.InfoCF("pet", "PetService activity recorded", map[string]any{
+		"character_id": charID,
+		"session_id":   sessionID,
+	})
+}
+
+func (s *PetService) recordToolCallActivity(sessionID, tool string, args map[string]any) {
 	if s.activityStore == nil || s.charManager == nil {
 		return
 	}
@@ -373,10 +514,27 @@ func (s *PetService) recordUserActivity(sessionID, text string) {
 	if charID == "" {
 		return
 	}
-	// 这里只记录最基础的一类活动：用户消息。
-	// 后续再逐步把 tool result / file output 也补进来。
-	if err := s.activityStore.Append(activity.BuildUserMessageEvent(charID, sessionID, text)); err != nil {
-		logger.WarnCF("pet", "PetService: failed to append activity event", map[string]any{"error": err.Error()})
+	if err := s.activityStore.Append(activity.BuildToolCallEvent(charID, sessionID, tool, args)); err != nil {
+		logger.WarnCF("pet", "PetService: failed to append tool call activity", map[string]any{
+			"tool":  tool,
+			"error": err.Error(),
+		})
+	}
+}
+
+func (s *PetService) recordToolResultActivity(sessionID, tool string, result *tools.ToolResult) {
+	if s.activityStore == nil || s.charManager == nil {
+		return
+	}
+	charID := s.charManager.GetCurrentID()
+	if charID == "" {
+		return
+	}
+	if err := s.activityStore.Append(activity.BuildToolResultEvent(charID, sessionID, tool, result)); err != nil {
+		logger.WarnCF("pet", "PetService: failed to append tool result activity", map[string]any{
+			"tool":  tool,
+			"error": err.Error(),
+		})
 	}
 }
 
@@ -429,12 +587,24 @@ func (s *PetService) PushToolEnd(tool string, data json.RawMessage) {
 func (s *PetService) RegisterSession(connID, sessionID string) {
 	s.mu.Lock()
 	s.connSessions[connID] = sessionID
+	if sessionID != "" {
+		s.activeSessionID = sessionID
+		s.lastSessionActiveAt = time.Now()
+		if s.charManager != nil {
+			s.activeCharacterID = s.charManager.GetCurrentID()
+		}
+	}
 	s.mu.Unlock()
 }
 
 func (s *PetService) UnregisterSession(connID string) {
 	s.mu.Lock()
 	delete(s.connSessions, connID)
+	if len(s.connSessions) == 0 {
+		s.activeSessionID = ""
+		s.activeCharacterID = ""
+		s.lastSessionActiveAt = time.Time{}
+	}
 	s.mu.Unlock()
 }
 
@@ -442,6 +612,35 @@ func (s *PetService) GetSessionByConnID(connID string) string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.connSessions[connID]
+}
+
+func (s *PetService) markSessionInteraction(sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.activeSessionID = sessionID
+	s.lastSessionActiveAt = time.Now()
+	if s.charManager != nil {
+		s.activeCharacterID = s.charManager.GetCurrentID()
+	}
+}
+
+func (s *PetService) resolveActiveDeliverySession() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.activeSessionID == "" {
+		return ""
+	}
+	if s.activeCharacterID != "" && s.charManager != nil && s.charManager.GetCurrentID() != s.activeCharacterID {
+		return ""
+	}
+	return s.activeSessionID
+}
+
+func (s *PetService) ResolveReminderDeliverySession() string {
+	return s.resolveActiveDeliverySession()
 }
 
 func (s *PetService) PushInitStatus(sessionID string) {
@@ -593,6 +792,10 @@ func (s *PetService) HandleRequest(connID string, req Request) error {
 		return s.handleVoiceConfigGet(sessionID, req)
 	case ActionVoiceConfigUpdate:
 		return s.handleVoiceConfigUpdate(sessionID, req)
+	case "debug_generate_weekly_report":
+		return s.handleDebugWeeklyReport(sessionID, req)
+	case "debug_generate_progress_nudge":
+		return s.handleDebugProgressNudge(sessionID, req)
 	default:
 		return s.sendError(sessionID, req.Action, fmt.Sprintf("unknown action: %s", req.Action))
 	}
@@ -608,13 +811,10 @@ func (s *PetService) handleChat(sessionID string, req Request) error {
 	if char == nil {
 		return s.sendError(sessionID, req.Action, "no active character")
 	}
+	s.markSessionInteraction(sessionID)
 
-	// 用户一说话，就顺手记一笔活动记录，
-	// 同时触发一次主动性“即时评估”。
+	// 用户一说话，就顺手记一笔活动记录。
 	s.recordUserActivity(sessionID, chatReq.Text)
-	if s.proactiveManager != nil {
-		s.proactiveManager.Trigger("user_message")
-	}
 
 	inbound := bus.InboundMessage{
 		Channel:    "pet",
@@ -631,6 +831,10 @@ func (s *PetService) handleChat(sessionID string, req Request) error {
 	if err := s.msgBus.PublishInbound(context.Background(), inbound); err != nil {
 		return s.sendError(sessionID, req.Action, err.Error())
 	}
+
+	// 把“用户回来了”的投递时机放在主链路确认发布之后，并延迟一小段时间，
+	// 避免频繁聊天时刚发完消息就立刻弹出主动提醒。
+	s.scheduleProactiveFollowUp("user_message", 90*time.Second)
 
 	return s.sendResponse(sessionID, req.Action, map[string]string{"session_key": chatReq.SessionKey})
 }
@@ -987,11 +1191,12 @@ func (s *PetService) sendPush(sessionID, pushType string, data interface{}) erro
 		return err
 	}
 
-	push := Push{
-		Type:      "push",
-		PushType:  pushType,
-		Data:      rawData,
-		Timestamp: time.Now().Unix(),
+	push := map[string]any{
+		"type":       "push",
+		"push_type":  pushType,
+		"data":       rawData,
+		"timestamp":  time.Now().Unix(),
+		"session_id": sessionID,
 	}
 
 	if s.pushHandler == nil {
@@ -1006,13 +1211,11 @@ func (s *PetService) deliverProactiveIntent(intent proactive.Intent, level proac
 		return nil
 	}
 
-	sessionID := ""
-	s.mu.RLock()
-	for _, sid := range s.connSessions {
-		sessionID = sid
-		break
+	if intent.Type == "weekly_report" && intent.Payload == nil {
+		return nil
 	}
-	s.mu.RUnlock()
+
+	sessionID := s.resolveActiveDeliverySession()
 	if sessionID == "" {
 		return nil
 	}
@@ -1048,7 +1251,30 @@ func (s *PetService) deliverProactiveIntent(intent proactive.Intent, level proac
 	if err := s.sendPush(sessionID, pushType, payload); err != nil {
 		return err
 	}
+	if intent.Type == "weekly_report" {
+		if err := s.markWeeklyReportDelivered(intent.Payload, time.Now()); err != nil {
+			return err
+		}
+	}
 	return s.proactiveManager.RecordDelivery(intent.Type, eventID, s.charManager.GetCurrentID())
+}
+
+func (s *PetService) markWeeklyReportDelivered(payload map[string]any, deliveredAt time.Time) error {
+	stateStore := proactive.NewWeeklyReportStateStore(s.WorkspacePath())
+	state, err := stateStore.Load()
+	if err != nil {
+		return err
+	}
+	if state == nil {
+		return nil
+	}
+	if reportID, ok := payload["report_id"].(string); ok && reportID != "" {
+		state.ReportID = reportID
+	}
+	nowCopy := deliveredAt
+	state.Ready = true
+	state.DeliveredAt = &nowCopy
+	return stateStore.Save(state)
 }
 
 func (s *PetService) AppConfig() *petconfig.AppConfig {
@@ -1423,6 +1649,13 @@ func (s *PetService) handleCronAdd(sessionID string, req Request) error {
 	job, err := s.cronService.AddJob(r.Name, schedule, r.Message, "pet", sessionID)
 	if err != nil {
 		return s.sendError(sessionID, req.Action, fmt.Sprintf("failed to add cron job: %v", err))
+	}
+
+	if s.activityStore != nil && s.charManager != nil {
+		charID := s.charManager.GetCurrentID()
+		if charID != "" {
+			s.appendCronActivityEvent(charID, job)
+		}
 	}
 
 	return s.sendResponse(sessionID, req.Action, CronAddResponse{
@@ -2177,10 +2410,10 @@ func (s *PetService) handleAudioFrame(sessionID string, req Request) error {
 			errMsg = "语音通道未就绪，请重启应用后重试"
 		}
 		logger.ErrorCF("pet", "Failed to publish audio chunk", map[string]any{
-			"error":     err.Error(),
+			"error":      err.Error(),
 			"session_id": sessionID,
-			"sequence":  data.Sequence,
-			"chat_id":   chunk.ChatID,
+			"sequence":   data.Sequence,
+			"chat_id":    chunk.ChatID,
 		})
 		return s.sendError(sessionID, req.Action, errMsg)
 	}
@@ -2240,5 +2473,139 @@ func (s *PetService) handleVoiceConfigUpdate(sessionID string, req Request) erro
 		}
 	}
 
+	return s.sendResponse(sessionID, req.Action, map[string]string{"status": "ok"})
+}
+
+func (s *PetService) handleDebugWeeklyReport(sessionID string, req Request) error {
+	if s.activityStore == nil || s.charManager == nil {
+		return s.sendError(sessionID, req.Action, "activity store not initialized")
+	}
+	s.markSessionInteraction(sessionID)
+
+	charID := s.charManager.GetCurrentID()
+	now := time.Now()
+	seedEvents := []*activity.Event{
+		{
+			ID:          activity.NewID(),
+			CharacterID: charID,
+			SessionID:   sessionID,
+			Type:        activity.EventUserMessage,
+			Category:    activity.CategoryDoc,
+			Status:      activity.StatusDone,
+			Title:       "整理主动性周报",
+			Summary:     "整理主动性周报",
+			CreatedAt:   now.Add(-2 * time.Hour),
+		},
+		{
+			ID:          activity.NewID(),
+			CharacterID: charID,
+			SessionID:   sessionID,
+			Type:        activity.EventTaskResult,
+			Category:    activity.CategoryCode,
+			Status:      activity.StatusDone,
+			Title:       "完成打包修复",
+			Summary:     "完成打包修复",
+			CreatedAt:   now.Add(-90 * time.Minute),
+		},
+		{
+			ID:          activity.NewID(),
+			CharacterID: charID,
+			SessionID:   sessionID,
+			Type:        activity.EventTaskResult,
+			Category:    activity.CategoryDoc,
+			Status:      activity.StatusPending,
+			Title:       "补充联调文档",
+			Summary:     "补充联调文档",
+			CreatedAt:   now.Add(-30 * time.Minute),
+		},
+	}
+	for _, ev := range seedEvents {
+		if err := s.activityStore.Append(ev); err != nil {
+			return s.sendError(sessionID, req.Action, err.Error())
+		}
+	}
+
+	snapshot := proactive.BuildSnapshot(now, proactive.SnapshotDependencies{
+		ActivityStore:      s.activityStore,
+		ConfigManager:      s.configManager,
+		UserProfileManager: s.userProfileManager,
+		CharacterProvider:  s.charManager,
+		LastPushAt: func() time.Time {
+			if s.proactiveManager == nil {
+				return time.Time{}
+			}
+			return s.proactiveManager.LastPushAt()
+		},
+	})
+	snapshot.EvaluationReason = "user_message"
+
+	provider := proactive.NewWeeklyReportProvider(
+		s.activityStore,
+		proactive.NewWeeklyReportStateStore(s.WorkspacePath()),
+	)
+	intent, ok, err := provider.Evaluate(snapshot)
+	if err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+	if !ok || intent == nil {
+		return s.sendError(sessionID, req.Action, "weekly report provider did not produce intent")
+	}
+	if err := s.deliverProactiveIntent(*intent, proactive.DeliveryCard); err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+	return s.sendResponse(sessionID, req.Action, map[string]string{"status": "ok"})
+}
+
+func (s *PetService) handleDebugProgressNudge(sessionID string, req Request) error {
+	if s.activityStore == nil || s.charManager == nil {
+		return s.sendError(sessionID, req.Action, "activity store not initialized")
+	}
+	s.markSessionInteraction(sessionID)
+
+	charID := s.charManager.GetCurrentID()
+	now := time.Now()
+	ev := &activity.Event{
+		ID:          activity.NewID(),
+		CharacterID: charID,
+		SessionID:   sessionID,
+		Type:        activity.EventTaskResult,
+		Category:    activity.CategoryCode,
+		Status:      activity.StatusPending,
+		Title:       "还有一段逻辑没收口",
+		Summary:     "还有一段逻辑没收口",
+		CreatedAt:   now.Add(-15 * time.Minute),
+	}
+	if err := s.activityStore.Append(ev); err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+
+	snapshot := proactive.BuildSnapshot(now, proactive.SnapshotDependencies{
+		ActivityStore:      s.activityStore,
+		ConfigManager:      s.configManager,
+		UserProfileManager: s.userProfileManager,
+		CharacterProvider:  s.charManager,
+		LastPushAt: func() time.Time {
+			if s.proactiveManager == nil {
+				return time.Time{}
+			}
+			return s.proactiveManager.LastPushAt()
+		},
+	})
+	snapshot.EvaluationReason = "user_message"
+
+	provider := proactive.NewProgressNudgeProvider(
+		s.activityStore,
+		proactive.NewHistoryStore(s.WorkspacePath()),
+	)
+	intent, ok, err := provider.Evaluate(snapshot)
+	if err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+	if !ok || intent == nil {
+		return s.sendError(sessionID, req.Action, "progress nudge provider did not produce intent")
+	}
+	if err := s.deliverProactiveIntent(*intent, proactive.DeliveryBubble); err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
 	return s.sendResponse(sessionID, req.Action, map[string]string{"status": "ok"})
 }

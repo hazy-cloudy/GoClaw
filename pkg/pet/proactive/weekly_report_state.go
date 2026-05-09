@@ -7,15 +7,21 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/sipeed/picoclaw/pkg/pet/report"
 )
 
 type WeeklyReportState struct {
-	WeekKey     string     `json:"week_key"`
-	ReportID    string     `json:"report_id"`
-	Ready       bool       `json:"ready"`
-	GeneratedAt *time.Time `json:"generated_at,omitempty"`
-	DeliveredAt *time.Time `json:"delivered_at,omitempty"`
-	ExpireAt    *time.Time `json:"expire_at,omitempty"`
+	WeekKey     string             `json:"week_key"`
+	ReportID    string             `json:"report_id"`
+	Ready       bool               `json:"ready"`
+	GeneratedAt *time.Time         `json:"generated_at,omitempty"`
+	DeliveredAt *time.Time         `json:"delivered_at,omitempty"`
+	ExpireAt    *time.Time         `json:"expire_at,omitempty"`
+	Title       string             `json:"title,omitempty"`
+	Summary     string             `json:"summary,omitempty"`
+	ReasonCodes []string           `json:"reason_codes,omitempty"`
+	Report      *report.WeeklyReport `json:"report,omitempty"`
 }
 
 type WeeklyReportStateStore struct {

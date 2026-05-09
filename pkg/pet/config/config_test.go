@@ -106,11 +106,11 @@ func TestDefaultMBTI(t *testing.T) {
 func TestDefaultVoiceConfig(t *testing.T) {
 	cfg := DefaultVoiceConfig()
 
-	if len(cfg.ModelList) != 0 {
-		t.Errorf("ModelList length=%d, want 0", len(cfg.ModelList))
+	if len(cfg.ModelList) != 1 {
+		t.Errorf("ModelList length=%d, want 1", len(cfg.ModelList))
 	}
-	if cfg.DefaultModel != "" {
-		t.Errorf("DefaultModel=%q, want empty", cfg.DefaultModel)
+	if cfg.DefaultModel != "doubao-tts" {
+		t.Errorf("DefaultModel=%q, want %q", cfg.DefaultModel, "doubao-tts")
 	}
 	if cfg.ASREnabled {
 		t.Error("ASREnabled should be false")
@@ -363,9 +363,60 @@ func TestConfigLoader_GetDefaultVoiceModel(t *testing.T) {
 
 	loader := NewConfigLoader(tmpDir)
 	loader.Load()
+	loader.config.Voice.DefaultModel = ""
 
 	model := loader.GetDefaultVoiceModel()
 	if model != nil {
 		t.Error("GetDefaultVoiceModel should return nil when no default model is set")
+	}
+}
+
+func TestConfigLoader_Load_AppMissingNewProactiveFieldsUsesDefaults(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "config-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	raw := `{
+  "characters": [{"id":"pet_001","name":"test","persona":"p","persona_type":"gentle"}],
+  "active_id": "pet_001",
+  "voice": {"model_list": [], "default_model": "", "asr_enabled": false},
+  "app": {
+    "emotion_enabled": true,
+    "reminder_enabled": false,
+    "proactive_care": false,
+    "proactive_interval_minutes": 30,
+    "voice_enabled": true,
+    "language": "zh-CN"
+  }
+}`
+	if err := os.WriteFile(filepath.Join(tmpDir, PetConfigFile), []byte(raw), 0644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	loader := NewConfigLoader(tmpDir)
+	if err := loader.Load(); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	app := loader.GetApp()
+	if app == nil {
+		t.Fatal("GetApp returned nil")
+	}
+	if app.ProactiveCare {
+		t.Fatal("ProactiveCare should preserve stored false")
+	}
+	if !app.WeeklyReportEnabled {
+		t.Fatal("WeeklyReportEnabled should default to true when field is missing")
+	}
+	if !app.ProgressNudgeEnabled {
+		t.Fatal("ProgressNudgeEnabled should default to true when field is missing")
+	}
+	if app.ProactiveCheckMinutes != 30 {
+		t.Fatalf("ProactiveCheckMinutes = %d, want 30", app.ProactiveCheckMinutes)
+	}
+	if app.GlobalCooldownMinutes != 90 {
+		t.Fatalf("GlobalCooldownMinutes = %d, want 90", app.GlobalCooldownMinutes)
 	}
 }
