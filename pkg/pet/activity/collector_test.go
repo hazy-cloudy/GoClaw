@@ -1,6 +1,10 @@
 package activity
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/sipeed/picoclaw/pkg/tools"
+)
 
 func TestClassifyText(t *testing.T) {
 	tests := []struct {
@@ -41,5 +45,21 @@ func TestBuildUserMessageEvent(t *testing.T) {
 	}
 	if event.CreatedAt.IsZero() {
 		t.Fatal("CreatedAt should be set")
+	}
+}
+
+func TestBuildToolResultEventMarksFailure(t *testing.T) {
+	event := BuildToolResultEvent("pet_001", "session-1", "run_tests", &tools.ToolResult{
+		ForLLM:  "tests failed",
+		IsError: true,
+	})
+	if event.Type != EventToolResult {
+		t.Fatalf("Type = %q", event.Type)
+	}
+	if event.Status != StatusFailed {
+		t.Fatalf("Status = %q, want %q", event.Status, StatusFailed)
+	}
+	if event.Category != CategoryOther {
+		t.Fatalf("Category = %q, want %q", event.Category, CategoryOther)
 	}
 }

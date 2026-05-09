@@ -142,6 +142,11 @@ func (l *ConfigLoader) Load() error {
 		return fmt.Errorf("failed to read %s: %w", path, err)
 	}
 
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("failed to parse %s: %w", path, err)
+	}
+
 	var cfg PetConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return fmt.Errorf("failed to parse %s: %w", path, err)
@@ -163,6 +168,8 @@ func (l *ConfigLoader) Load() error {
 	}
 	if cfg.App == nil {
 		cfg.App = DefaultAppConfig()
+	} else {
+		applyMissingAppDefaults(cfg.App, extractRawObject(raw, "app"))
 	}
 	// 确保 memory 和 compression 配置存在，使用默认值
 	if cfg.Memory == nil {
@@ -179,6 +186,62 @@ func (l *ConfigLoader) Load() error {
 
 	logger.Infof("pet config: loaded config, active_id=%s, voice_enabled=%v", cfg.ActiveID, cfg.App.VoiceEnabled)
 	return nil
+}
+
+func extractRawObject(raw map[string]json.RawMessage, key string) map[string]json.RawMessage {
+	if len(raw) == 0 {
+		return nil
+	}
+	value, ok := raw[key]
+	if !ok || len(value) == 0 || string(value) == "null" {
+		return nil
+	}
+	var out map[string]json.RawMessage
+	if err := json.Unmarshal(value, &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+func applyMissingAppDefaults(app *AppConfig, raw map[string]json.RawMessage) {
+	if app == nil {
+		return
+	}
+	defaults := DefaultAppConfig()
+
+	if _, ok := raw["emotion_enabled"]; !ok {
+		app.EmotionEnabled = defaults.EmotionEnabled
+	}
+	if _, ok := raw["reminder_enabled"]; !ok {
+		app.ReminderEnabled = defaults.ReminderEnabled
+	}
+	if _, ok := raw["proactive_care"]; !ok {
+		app.ProactiveCare = defaults.ProactiveCare
+	}
+	if _, ok := raw["proactive_interval_minutes"]; !ok {
+		app.ProactiveIntervalMinutes = defaults.ProactiveIntervalMinutes
+	}
+	if _, ok := raw["weekly_report_enabled"]; !ok {
+		app.WeeklyReportEnabled = defaults.WeeklyReportEnabled
+	}
+	if _, ok := raw["progress_nudge_enabled"]; !ok {
+		app.ProgressNudgeEnabled = defaults.ProgressNudgeEnabled
+	}
+	if _, ok := raw["proactive_check_minutes"]; !ok {
+		app.ProactiveCheckMinutes = defaults.ProactiveCheckMinutes
+	}
+	if _, ok := raw["global_cooldown_minutes"]; !ok {
+		app.GlobalCooldownMinutes = defaults.GlobalCooldownMinutes
+	}
+	if _, ok := raw["voice_enabled"]; !ok {
+		app.VoiceEnabled = defaults.VoiceEnabled
+	}
+	if _, ok := raw["asr_enabled"]; !ok {
+		app.ASREnabled = defaults.ASREnabled
+	}
+	if _, ok := raw["language"]; !ok {
+		app.Language = defaults.Language
+	}
 }
 
 // Save 保存配置到pet_config.json
@@ -289,6 +352,14 @@ func (l *ConfigLoader) GetVoiceModelConfig(name string) *VoiceModelConfig {
 		}
 	}
 	return nil
+}
+
+// GetDefaultVoiceModel returns the default voice model config when present.
+func (l *ConfigLoader) GetDefaultVoiceModel() *VoiceModelConfig {
+	if l.config == nil || l.config.Voice == nil || l.config.Voice.DefaultModel == "" {
+		return nil
+	}
+	return l.GetVoiceModelConfig(l.config.Voice.DefaultModel)
 }
 
 // GetVoiceModelList 获取所有语音模型（TTS）列表

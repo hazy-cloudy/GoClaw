@@ -49,10 +49,25 @@ func TestAggregateWeeklyReport(t *testing.T) {
 	if report.TaskCount != 2 {
 		t.Fatalf("TaskCount = %d, want 2", report.TaskCount)
 	}
+	if report.TaskDoneCount != 1 {
+		t.Fatalf("TaskDoneCount = %d, want 1", report.TaskDoneCount)
+	}
+	if report.CompletionRate != 50 {
+		t.Fatalf("CompletionRate = %d, want 50", report.CompletionRate)
+	}
+	if report.ActiveDays != 1 {
+		t.Fatalf("ActiveDays = %d, want 1", report.ActiveDays)
+	}
+	if report.SessionCount != 1 {
+		t.Fatalf("SessionCount = %d, want 1", report.SessionCount)
+	}
 	if len(report.Unfinished) != 1 || report.Unfinished[0] != "补充联调文档" {
 		t.Fatalf("Unfinished = %#v", report.Unfinished)
 	}
 	if len(report.Outputs) != 1 || report.Outputs[0] != "完成打包修复" {
 		t.Fatalf("Outputs = %#v", report.Outputs)
+	}
+	if report.FirstActiveAt == nil || report.LastActiveAt == nil {
+		t.Fatal("expected first/last active timestamps")
 	}
 }

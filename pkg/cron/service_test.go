@@ -82,6 +82,42 @@ func TestCronService_CRUD(t *testing.T) {
 	}
 }
 
+func TestCronService_DedupOneTimeJob(t *testing.T) {
+	cs, path := setupService(nil)
+	defer os.Remove(path)
+
+	at := time.Now().Add(21 * time.Hour).UnixMilli()
+	first, err := cs.AddJob(
+		"PPT reminder",
+		CronSchedule{Kind: "at", AtMS: &at},
+		"主人～今天要讲PPT哦，加油！艾莉相信你可以的！",
+		"pet",
+		"session-1",
+	)
+	if err != nil {
+		t.Fatalf("AddJob failed: %v", err)
+	}
+
+	at2 := at + 25*1000
+	second, err := cs.AddJob(
+		"PPT reminder",
+		CronSchedule{Kind: "at", AtMS: &at2},
+		"主人～今天要讲PPT哦，加油！艾莉相信你可以的！",
+		"pet",
+		"session-1",
+	)
+	if err != nil {
+		t.Fatalf("AddJob failed: %v", err)
+	}
+
+	if first.ID != second.ID {
+		t.Fatalf("expected duplicate one-time job to reuse existing id, got %s and %s", first.ID, second.ID)
+	}
+	if len(cs.ListJobs(true)) != 1 {
+		t.Fatalf("expected 1 job after dedupe, got %d", len(cs.ListJobs(true)))
+	}
+}
+
 // 2. Test Cron Expression Calculation Logic
 func TestCronService_ComputeNextRun(t *testing.T) {
 	cs, path := setupService(nil)
@@ -98,7 +134,7 @@ func TestCronService_ComputeNextRun(t *testing.T) {
 		{"Invalid Cron", CronSchedule{Kind: "cron", Expr: "invalid"}, true},
 		{"Every MS", CronSchedule{Kind: "every", EveryMS: int64Ptr(5000)}, false},
 		{"At Future", CronSchedule{Kind: "at", AtMS: int64Ptr(now + 1000)}, false},
-		{"At Past", CronSchedule{Kind: "at", AtMS: int64Ptr(now - 1000)}, true},
+		{"At Past", CronSchedule{Kind: "at", AtMS: int64Ptr(now - 1000)}, false},
 	}
 
 	for _, tt := range tests {
@@ -158,6 +194,65 @@ func TestCronService_ExecutionFlow(t *testing.T) {
 	if status["jobs"].(int) != 0 {
 		t.Errorf("Job should be deleted after run, got count: %v", status["jobs"])
 	}
+}
+
+func TestCronService_ExecuteJobDeferredKeepsOneTimeJobForRetry(t *testing.T) {
+	cs, path := setupService(func(job *CronJob) (string, error) {
+		return "", fmt.Errorf("%w: waiting for active pet session", ErrJobDeferred)
+	})
+	defer os.Remove(path)
+
+	now := time.Now().Add(-time.Second).UnixMilli()
+	job, err := cs.AddJob("DeferredReminder", CronSchedule{Kind: "at", AtMS: &now}, "msg", "pet", "session-old")
+	if err != nil {
+		t.Fatalf("AddJob failed: %v", err)
+	}
+
+	cs.executeJobByID(job.ID)
+
+	jobs := cs.ListJobs(true)
+	if len(jobs) != 1 {
+		t.Fatalf("expected deferred job to remain, got %d jobs", len(jobs))
+	}
+	if jobs[0].State.LastStatus != "deferred" {
+		t.Fatalf("last status = %q, want deferred", jobs[0].State.LastStatus)
+	}
+	if jobs[0].State.NextRunAtMS == nil || *jobs[0].State.NextRunAtMS <= time.Now().UnixMilli() {
+		t.Fatalf("expected deferred job to be rescheduled, got %+v", jobs[0].State.NextRunAtMS)
+	}
+}
+
+func TestCronService_StartRunsOverdueOneTimeJobAfterReload(t *testing.T) {
+	var executed sync.Map
+
+	tmpDir := t.TempDir()
+	storePath := filepath.Join(tmpDir, "cron", "jobs.json")
+	at := time.Now().Add(-2 * time.Second).UnixMilli()
+
+	cs1 := NewCronService(storePath, nil)
+	job, err := cs1.AddJob("OverdueReminder", CronSchedule{Kind: "at", AtMS: &at}, "msg", "pet", "session-old")
+	if err != nil {
+		t.Fatalf("AddJob failed: %v", err)
+	}
+
+	cs2 := NewCronService(storePath, func(runJob *CronJob) (string, error) {
+		executed.Store(runJob.ID, true)
+		return "ok", nil
+	})
+	if err := cs2.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer cs2.Stop()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, ok := executed.Load(job.ID); ok {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	t.Fatalf("expected overdue one-time job %s to execute after restart", job.ID)
 }
 
 func TestCronService_PersistenceIntegrity(t *testing.T) {

@@ -61,6 +61,7 @@ const (
 
 type services struct {
 	CronService      *cron.CronService
+	CronTool         *tools.CronTool
 	HeartbeatService *heartbeat.HeartbeatService
 	MediaStore       media.MediaStore
 	ChannelManager   *channels.Manager
@@ -330,7 +331,7 @@ func setupAndStartServices(
 
 	execTimeout := time.Duration(cfg.Tools.Cron.ExecTimeoutMinutes) * time.Minute
 	var err error
-	runningServices.CronService, err = setupCronTool(
+	runningServices.CronService, runningServices.CronTool, err = setupCronTool(
 		agentLoop,
 		msgBus,
 		cfg.WorkspacePath(),
@@ -341,11 +342,6 @@ func setupAndStartServices(
 	if err != nil {
 		return nil, fmt.Errorf("error setting up cron service: %w", err)
 	}
-	if err = runningServices.CronService.Start(); err != nil {
-		return nil, fmt.Errorf("error starting cron service: %w", err)
-	}
-	fmt.Println("✓ Cron service started")
-
 	runningServices.HeartbeatService = heartbeat.NewHeartbeatService(
 		cfg.WorkspacePath(),
 		cfg.Heartbeat.Interval,
@@ -379,6 +375,12 @@ func setupAndStartServices(
 
 	agentLoop.SetChannelManager(runningServices.ChannelManager)
 	agentLoop.SetMediaStore(runningServices.MediaStore)
+	bindPetCronDeliveryResolver(runningServices)
+
+	if err = runningServices.CronService.Start(); err != nil {
+		return nil, fmt.Errorf("error starting cron service: %w", err)
+	}
+	fmt.Println("Cron service started")
 
 	// 从 pet channel 获取 ASR loader（优先），fallback 到 config.json 的检测
 	var asrTranscriber asr.Transcriber
@@ -588,7 +590,7 @@ func restartServices(
 
 	execTimeout := time.Duration(cfg.Tools.Cron.ExecTimeoutMinutes) * time.Minute
 	var err error
-	runningServices.CronService, err = setupCronTool(
+	runningServices.CronService, runningServices.CronTool, err = setupCronTool(
 		al,
 		msgBus,
 		cfg.WorkspacePath(),
@@ -599,10 +601,6 @@ func restartServices(
 	if err != nil {
 		return fmt.Errorf("error restarting cron service: %w", err)
 	}
-	if err = runningServices.CronService.Start(); err != nil {
-		return fmt.Errorf("error restarting cron service: %w", err)
-	}
-	fmt.Println("  ✓ Cron service restarted")
 
 	runningServices.HeartbeatService = heartbeat.NewHeartbeatService(
 		cfg.WorkspacePath(),
@@ -632,6 +630,13 @@ func restartServices(
 		return fmt.Errorf("error reload channels: %w", err)
 	}
 	fmt.Println("  ✓ Channels restarted.")
+
+	bindPetCronDeliveryResolver(runningServices)
+
+	if err = runningServices.CronService.Start(); err != nil {
+		return fmt.Errorf("error restarting cron service: %w", err)
+	}
+	fmt.Println("  Cron service restarted")
 
 	enabledChannels := runningServices.ChannelManager.GetEnabledChannels()
 	if len(enabledChannels) > 0 {
@@ -783,6 +788,43 @@ func getFileSize(path string) int64 {
 	return info.Size()
 }
 
+func bindPetCronDeliveryResolver(runningServices *services) {
+	if runningServices == nil || runningServices.CronTool == nil {
+		return
+	}
+
+	runningServices.CronTool.SetDeliveryTargetResolver(func(
+		_ context.Context,
+		job *cron.CronJob,
+		channel string,
+		chatID string,
+	) (string, string, error) {
+		if job == nil || channel != "pet" || job.Schedule.Kind != "at" {
+			return channel, chatID, nil
+		}
+		if runningServices.ChannelManager == nil {
+			return "", "", fmt.Errorf("%w: pet channel manager unavailable", cron.ErrJobDeferred)
+		}
+
+		ch, ok := runningServices.ChannelManager.GetChannel("pet")
+		if !ok {
+			return "", "", fmt.Errorf("%w: pet channel unavailable", cron.ErrJobDeferred)
+		}
+
+		pc, ok := ch.(*petchannel.PetChannel)
+		if !ok || pc.Service() == nil {
+			return "", "", fmt.Errorf("%w: pet service unavailable", cron.ErrJobDeferred)
+		}
+
+		sessionID := pc.Service().ResolveReminderDeliverySession()
+		if sessionID == "" {
+			return "", "", fmt.Errorf("%w: no active pet session", cron.ErrJobDeferred)
+		}
+
+		return channel, sessionID, nil
+	})
+}
+
 func setupCronTool(
 	agentLoop *agent.AgentLoop,
 	msgBus *bus.MessageBus,
@@ -790,7 +832,7 @@ func setupCronTool(
 	restrict bool,
 	execTimeout time.Duration,
 	cfg *config.Config,
-) (*cron.CronService, error) {
+) (*cron.CronService, *tools.CronTool, error) {
 	cronStorePath := filepath.Join(workspace, "cron", "jobs.json")
 
 	cronService := cron.NewCronService(cronStorePath, nil)
@@ -800,7 +842,7 @@ func setupCronTool(
 		var err error
 		cronTool, err = tools.NewCronTool(cronService, agentLoop, msgBus, workspace, restrict, execTimeout, cfg)
 		if err != nil {
-			return nil, fmt.Errorf("critical error during CronTool initialization: %w", err)
+			return nil, nil, fmt.Errorf("critical error during CronTool initialization: %w", err)
 		}
 
 		agentLoop.RegisterTool(cronTool)
@@ -808,12 +850,11 @@ func setupCronTool(
 
 	if cronTool != nil {
 		cronService.SetOnJob(func(job *cron.CronJob) (string, error) {
-			result := cronTool.ExecuteJob(context.Background(), job)
-			return result, nil
+			return cronTool.ExecuteJob(context.Background(), job)
 		})
 	}
 
-	return cronService, nil
+	return cronService, cronTool, nil
 }
 
 // overridePicoToken replaces the pico channel token with the one from the PID file.

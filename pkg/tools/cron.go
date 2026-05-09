@@ -21,14 +21,22 @@ type JobExecutor interface {
 	PublishResponseIfNeeded(ctx context.Context, channel, chatID, response string)
 }
 
+type DeliveryTargetResolver func(
+	ctx context.Context,
+	job *cron.CronJob,
+	channel string,
+	chatID string,
+) (resolvedChannel string, resolvedChatID string, err error)
+
 // CronTool provides scheduling capabilities for the agent
 type CronTool struct {
-	cronService  *cron.CronService
-	executor     JobExecutor
-	msgBus       *bus.MessageBus
-	execTool     *ExecTool
-	allowCommand bool
-	execEnabled  bool
+	cronService            *cron.CronService
+	executor               JobExecutor
+	msgBus                 *bus.MessageBus
+	execTool               *ExecTool
+	allowCommand           bool
+	execEnabled            bool
+	deliveryTargetResolver DeliveryTargetResolver
 }
 
 // NewCronTool creates a new CronTool
@@ -69,6 +77,10 @@ func NewCronTool(
 // Name returns the tool name
 func (t *CronTool) Name() string {
 	return "cron"
+}
+
+func (t *CronTool) SetDeliveryTargetResolver(resolver DeliveryTargetResolver) {
+	t.deliveryTargetResolver = resolver
 }
 
 // Description returns the tool description
@@ -291,7 +303,7 @@ func (t *CronTool) enableJob(args map[string]any, enable bool) *ToolResult {
 }
 
 // ExecuteJob executes a cron job through the agent
-func (t *CronTool) ExecuteJob(ctx context.Context, job *cron.CronJob) string {
+func (t *CronTool) ExecuteJob(ctx context.Context, job *cron.CronJob) (string, error) {
 	// Get channel/chatID from job payload
 	channel := job.Payload.Channel
 	chatID := job.Payload.To
@@ -302,6 +314,19 @@ func (t *CronTool) ExecuteJob(ctx context.Context, job *cron.CronJob) string {
 	}
 	if chatID == "" {
 		chatID = "direct"
+	}
+
+	if t.deliveryTargetResolver != nil {
+		resolvedChannel, resolvedChatID, err := t.deliveryTargetResolver(ctx, job, channel, chatID)
+		if err != nil {
+			return "", err
+		}
+		if resolvedChannel != "" {
+			channel = resolvedChannel
+		}
+		if resolvedChatID != "" {
+			chatID = resolvedChatID
+		}
 	}
 
 	// Execute command if present
@@ -315,7 +340,7 @@ func (t *CronTool) ExecuteJob(ctx context.Context, job *cron.CronJob) string {
 				ChatID:  chatID,
 				Content: output,
 			})
-			return "ok"
+			return "ok", nil
 		}
 
 		args := map[string]any{
@@ -339,7 +364,7 @@ func (t *CronTool) ExecuteJob(ctx context.Context, job *cron.CronJob) string {
 			ChatID:  chatID,
 			Content: output,
 		})
-		return "ok"
+		return "ok", nil
 	}
 
 	sessionKey := fmt.Sprintf("cron-%s", job.ID)
@@ -353,11 +378,11 @@ func (t *CronTool) ExecuteJob(ctx context.Context, job *cron.CronJob) string {
 		chatID,
 	)
 	if err != nil {
-		return fmt.Sprintf("Error: %v", err)
+		return "", err
 	}
 
 	if response != "" {
 		t.executor.PublishResponseIfNeeded(ctx, channel, chatID, response)
 	}
-	return "ok"
+	return "ok", nil
 }

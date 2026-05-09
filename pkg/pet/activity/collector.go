@@ -3,8 +3,11 @@ package activity
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"strings"
 	"time"
+
+	"github.com/sipeed/picoclaw/pkg/tools"
 )
 
 // NewID 生成一条活动记录的简易唯一 ID。
@@ -33,7 +36,7 @@ func ClassifyText(text string) Category {
 		return CategoryDoc
 	case strings.Contains(lower, "config") || strings.Contains(lower, "配置"):
 		return CategoryConfig
-	case strings.Contains(lower, "code") || strings.Contains(lower, "go ") || strings.Contains(lower, "ts") || strings.Contains(lower, "修复"):
+	case strings.Contains(lower, "code") || strings.Contains(lower, "go ") || strings.Contains(lower, ".ts") || strings.Contains(lower, "typescript") || strings.Contains(lower, "修复"):
 		return CategoryCode
 	default:
 		return CategoryOther
@@ -63,4 +66,66 @@ func BuildUserMessageEvent(characterID, sessionID, text string) *Event {
 		Summary:     trimmed,
 		CreatedAt:   time.Now(),
 	}
+}
+
+func BuildToolCallEvent(characterID, sessionID, tool string, args map[string]any) *Event {
+	title := strings.TrimSpace(tool)
+	if title == "" {
+		title = "tool_call"
+	}
+	summary := title
+	if len(args) > 0 {
+		summary = fmt.Sprintf("%s started", title)
+	}
+	return &Event{
+		ID:          NewID(),
+		CharacterID: characterID,
+		SessionID:   sessionID,
+		Type:        EventToolCall,
+		Category:    classifyToolName(tool),
+		Status:      StatusPending,
+		Title:       title,
+		Summary:     summary,
+		ToolName:    tool,
+		Meta: map[string]any{
+			"args": args,
+		},
+		CreatedAt: time.Now(),
+	}
+}
+
+func BuildToolResultEvent(characterID, sessionID, tool string, result *tools.ToolResult) *Event {
+	status := StatusDone
+	summary := strings.TrimSpace(tool + " completed")
+	if result != nil {
+		if result.IsError || result.Err != nil {
+			status = StatusFailed
+		}
+		if text := strings.TrimSpace(result.ForUser); text != "" {
+			summary = text
+		} else if text := strings.TrimSpace(result.ForLLM); text != "" {
+			summary = text
+		} else if result.Err != nil {
+			summary = result.Err.Error()
+		}
+	}
+	if summary == "" {
+		summary = "tool_result"
+	}
+	return &Event{
+		ID:          NewID(),
+		CharacterID: characterID,
+		SessionID:   sessionID,
+		Type:        EventToolResult,
+		Category:    classifyToolName(tool),
+		Status:      status,
+		Title:       tool,
+		Summary:     summary,
+		ToolName:    tool,
+		CreatedAt:   time.Now(),
+	}
+}
+
+func classifyToolName(tool string) Category {
+	return ClassifyText(strings.ReplaceAll(tool, "_", " "))
 }
