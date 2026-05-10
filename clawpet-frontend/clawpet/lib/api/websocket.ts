@@ -19,6 +19,7 @@ const PUSH_TYPE_TEXT_AND_AUDIO = "text_and_audio"
 const PUSH_TYPE_ASR = "asr"
 const PUSH_TYPE_EMOTION_CHANGE = "emotion_change"
 const PUSH_TYPE_ACTION_TRIGGER = "action_trigger"
+const PUSH_TYPE_PROGRESS_NUDGE = "progress_nudge"
 
 export interface ChatMessage {
   id: string
@@ -140,6 +141,7 @@ export type WSEventType =
   | "reconnecting"
   | "emotion_change"
   | "action_trigger"
+  | "progress_nudge"
 
 export interface WSEvent {
   type: WSEventType
@@ -150,6 +152,21 @@ type WSEventHandler = (event: WSEvent) => void
 
 function normalizeIncomingText(text: string): string {
   return text.replace(/\{[^}]*\}/g, "").trim()
+}
+
+function normalizePushPayload(data: unknown): Record<string, unknown> {
+  if (typeof data === "string") {
+    try {
+      const parsed = JSON.parse(data) as Record<string, unknown>
+      return parsed
+    } catch {
+      return {}
+    }
+  }
+  if (data && typeof data === "object") {
+    return data as Record<string, unknown>
+  }
+  return {}
 }
 
 export class PicoClawWebSocket {
@@ -475,6 +492,9 @@ export class PicoClawWebSocket {
       case PUSH_TYPE_ACTION_TRIGGER:
         this.handleActionTriggerPush(data)
         break
+      case PUSH_TYPE_PROGRESS_NUDGE:
+        this.handleProgressNudgePush(data)
+        break
       default:
         break
     }
@@ -730,6 +750,13 @@ export class PicoClawWebSocket {
     this.emit({
       type: "action_trigger",
       data: (data.expression as string) || (data.action as string) || "",
+    })
+  }
+
+  private handleProgressNudgePush(data: Record<string, unknown>): void {
+    this.emit({
+      type: "progress_nudge",
+      data: normalizePushPayload(data),
     })
   }
 

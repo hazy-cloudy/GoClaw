@@ -823,6 +823,63 @@ func bindPetCronDeliveryResolver(runningServices *services) {
 
 		return channel, sessionID, nil
 	})
+
+	runningServices.CronTool.SetOneTimePetDeadlineHandler(func(
+		_ context.Context,
+		job *cron.CronJob,
+		chatID string,
+	) (bool, error) {
+		if job == nil {
+			return false, nil
+		}
+		if runningServices.ChannelManager == nil {
+			return false, fmt.Errorf("%w: pet channel manager unavailable", cron.ErrJobDeferred)
+		}
+
+		ch, ok := runningServices.ChannelManager.GetChannel("pet")
+		if !ok {
+			return false, fmt.Errorf("%w: pet channel unavailable", cron.ErrJobDeferred)
+		}
+
+		pc, ok := ch.(*petchannel.PetChannel)
+		if !ok || pc.Service() == nil {
+			return false, fmt.Errorf("%w: pet service unavailable", cron.ErrJobDeferred)
+		}
+
+		retryCount := extractPetDeadlineRetryCount(job)
+		result := pc.Service().EvaluateTaskDeadlineReminder(chatID, job.ID, retryCount)
+		if result.Err != nil {
+			return false, result.Err
+		}
+		if result.Delivered {
+			return true, nil
+		}
+		if result.RetryAfter > 0 {
+			incrementPetDeadlineRetry(job)
+			if err := runningServices.CronService.UpdateJob(job); err != nil {
+				return false, err
+			}
+			return false, cron.NewDeferredError(result.RetryAfter, fmt.Errorf("pet deadline reminder waiting for interruptible state"))
+		}
+		return true, nil
+	})
+}
+
+func extractPetDeadlineRetryCount(job *cron.CronJob) int {
+	if job == nil {
+		return 0
+	}
+	if job.State.RetryCount < 0 {
+		return 0
+	}
+	return job.State.RetryCount
+}
+
+func incrementPetDeadlineRetry(job *cron.CronJob) {
+	if job == nil {
+		return
+	}
+	job.State.RetryCount = extractPetDeadlineRetryCount(job) + 1
 }
 
 func setupCronTool(

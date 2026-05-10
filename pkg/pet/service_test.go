@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/pet/memory"
+	proactivepkg "github.com/sipeed/picoclaw/pkg/pet/proactive"
 )
 
 // TestContainsIgnoreCase 测试 containsIgnoreCase 函数
@@ -212,5 +213,60 @@ func TestMemoryItemTimeFormat(t *testing.T) {
 	_, err := time.Parse("2006-01-02T15:04:05Z", item.CreatedAt)
 	if err != nil {
 		t.Errorf("CreatedAt time format is invalid: %v", err)
+	}
+}
+
+func TestRegisterSessionDoesNotMarkBusyWithoutInteraction(t *testing.T) {
+	service := &PetService{
+		connSessions: map[string]string{},
+	}
+
+	service.RegisterSession("conn-1", "session-1")
+
+	if service.activeSessionID != "session-1" {
+		t.Fatalf("activeSessionID = %q, want session-1", service.activeSessionID)
+	}
+	if !service.lastSessionActiveAt.IsZero() {
+		t.Fatalf("lastSessionActiveAt = %v, want zero until real interaction", service.lastSessionActiveAt)
+	}
+	if service.isCurrentSessionBusy(time.Now()) {
+		t.Fatal("expected connected session to stay non-busy before interaction")
+	}
+}
+
+func TestTriggerTaskDeadlineReminderDoesNotRefreshBusySession(t *testing.T) {
+	triggered := ""
+	service := &PetService{
+		connSessions: map[string]string{"conn-1": "session-1"},
+		activeSessionID: "session-1",
+		lastSessionActiveAt: time.Now().Add(-10 * time.Minute),
+		proactiveManager: proactivepkg.NewManager(
+			nil,
+			func(reason string) proactivepkg.Snapshot { return proactivepkg.Snapshot{} },
+			nil,
+			nil,
+		),
+	}
+	service.proactiveManager.SetRetryScheduler(func(reason string, delay time.Duration) {})
+	service.proactiveManager = proactivepkg.NewManager(
+		nil,
+		func(reason string) proactivepkg.Snapshot {
+			triggered = reason
+			return proactivepkg.Snapshot{}
+		},
+		nil,
+		nil,
+	)
+
+	before := service.lastSessionActiveAt
+	if err := service.TriggerTaskDeadlineReminderWithRetry("session-1", "job-1", 0); err != nil {
+		t.Fatalf("TriggerTaskDeadlineReminderWithRetry() error = %v", err)
+	}
+
+	if triggered != "task_deadline:job-1" {
+		t.Fatalf("triggered reason = %q, want task_deadline:job-1", triggered)
+	}
+	if !service.lastSessionActiveAt.Equal(before) {
+		t.Fatalf("lastSessionActiveAt changed from %v to %v, want unchanged", before, service.lastSessionActiveAt)
 	}
 }

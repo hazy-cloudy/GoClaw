@@ -37,6 +37,7 @@ type CronJobState struct {
 	LastRunAtMS *int64 `json:"lastRunAtMs,omitempty"`
 	LastStatus  string `json:"lastStatus,omitempty"`
 	LastError   string `json:"lastError,omitempty"`
+	RetryCount  int    `json:"retryCount,omitempty"`
 }
 
 type CronJob struct {
@@ -59,6 +60,45 @@ type CronStore struct {
 type JobHandler func(job *CronJob) (string, error)
 
 var ErrJobDeferred = errors.New("cron job deferred")
+
+type DeferredError struct {
+	Delay time.Duration
+	Cause error
+}
+
+func (e *DeferredError) Error() string {
+	if e == nil {
+		return ErrJobDeferred.Error()
+	}
+	if e.Cause != nil {
+		return fmt.Sprintf("%s: %v", ErrJobDeferred.Error(), e.Cause)
+	}
+	return ErrJobDeferred.Error()
+}
+
+func (e *DeferredError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	if e.Cause != nil {
+		return e.Cause
+	}
+	return ErrJobDeferred
+}
+
+func (e *DeferredError) Is(target error) bool {
+	return target == ErrJobDeferred
+}
+
+func NewDeferredError(delay time.Duration, cause error) error {
+	if delay <= 0 {
+		delay = deferredRetryInterval
+	}
+	return &DeferredError{
+		Delay: delay,
+		Cause: cause,
+	}
+}
 
 type CronService struct {
 	storePath string
@@ -270,7 +310,12 @@ func (cs *CronService) executeJobByID(jobID string) {
 	if errors.Is(err, ErrJobDeferred) {
 		job.State.LastStatus = "deferred"
 		job.State.LastError = err.Error()
-		retryAt := time.Now().Add(deferredRetryInterval).UnixMilli()
+		retryDelay := deferredRetryInterval
+		var deferredErr *DeferredError
+		if errors.As(err, &deferredErr) && deferredErr != nil && deferredErr.Delay > 0 {
+			retryDelay = deferredErr.Delay
+		}
+		retryAt := time.Now().Add(retryDelay).UnixMilli()
 		job.State.NextRunAtMS = &retryAt
 		log.Printf("[cron] job '%s' deferred after %dms: %v", job.Name, execDuration, err)
 		if err := cs.saveStoreUnsafe(); err != nil {

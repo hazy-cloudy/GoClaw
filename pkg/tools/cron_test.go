@@ -409,3 +409,37 @@ func TestCronTool_ExecuteJobDefersPetOneTimeReminderWithoutActiveSession(t *test
 		t.Fatalf("executor should not run on deferred reminder, got prompt %q", executor.lastPrompt)
 	}
 }
+
+func TestCronTool_ExecuteJobUsesOneTimePetDeadlineHandler(t *testing.T) {
+	executor := &stubJobExecutor{response: "generated reply"}
+	tool := newTestCronToolWithExecutorAndConfig(t, executor, config.DefaultConfig())
+
+	handlerCalled := false
+	tool.SetOneTimePetDeadlineHandler(func(_ context.Context, job *cron.CronJob, chatID string) (bool, error) {
+		handlerCalled = true
+		if job.ID != "job-pet-deadline" {
+			t.Fatalf("job id = %q, want job-pet-deadline", job.ID)
+		}
+		if chatID != "session-active" {
+			t.Fatalf("chatID = %q, want session-active", chatID)
+		}
+		return true, nil
+	})
+
+	at := time.Now().Add(time.Minute).UnixMilli()
+	job := &cron.CronJob{ID: "job-pet-deadline"}
+	job.Schedule = cron.CronSchedule{Kind: "at", AtMS: &at}
+	job.Payload.Channel = "pet"
+	job.Payload.To = "session-active"
+	job.Payload.Message = "deadline"
+
+	if got, err := tool.ExecuteJob(context.Background(), job); err != nil || got != "ok" {
+		t.Fatalf("ExecuteJob() = %q, %v, want ok", got, err)
+	}
+	if !handlerCalled {
+		t.Fatal("expected one-time pet deadline handler to be called")
+	}
+	if executor.lastPrompt != "" {
+		t.Fatalf("executor should not run when deadline handler handles the job, got prompt %q", executor.lastPrompt)
+	}
+}

@@ -21,6 +21,17 @@ func (e *InterruptibilityEvaluator) Evaluate(snapshot Snapshot) Interruptibility
 
 	// 用户当前正在忙，就不要打扰。
 	if snapshot.Activity.CurrentSessionBusy {
+		if !snapshot.Activity.LastUserMessageAt.IsZero() {
+			sinceLastMsg := now.Sub(snapshot.Activity.LastUserMessageAt)
+			if sinceLastMsg >= 45*time.Second {
+				return InterruptibilityDecision{
+					Interruptible: true,
+					Level:         InterruptibilitySoft,
+					ReasonCodes:   []string{"recent_user_activity"},
+					NextCheckAfter: 0,
+				}
+			}
+		}
 		return InterruptibilityDecision{
 			Interruptible: false,
 			Level:         InterruptibilityNo,

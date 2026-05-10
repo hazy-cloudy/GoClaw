@@ -48,3 +48,41 @@ func TestBuildSnapshotUsesUserTone(t *testing.T) {
 		t.Fatalf("Pet.PersonaType = %q, want %q", snapshot.Pet.PersonaType, "gentle")
 	}
 }
+
+func TestBuildSnapshotIncludesRuntimeActivityState(t *testing.T) {
+	baseDir := t.TempDir()
+
+	cfgMgr := petconfig.NewManager(baseDir)
+	if cfgMgr == nil {
+		t.Fatal("expected config manager")
+	}
+
+	charMgr, err := characters.NewManager(cfgMgr.GetCharacters(), cfgMgr)
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	activityStore, err := activity.NewStore(baseDir)
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	snapshot := BuildSnapshot(time.Now(), SnapshotDependencies{
+		ActivityStore:     activityStore,
+		ConfigManager:     cfgMgr,
+		CharacterProvider: charMgr,
+		ActiveSessionID: func() string {
+			return "session-live"
+		},
+		CurrentSessionBusy: func(now time.Time) bool {
+			return true
+		},
+	})
+
+	if snapshot.Activity.ActiveSessionID != "session-live" {
+		t.Fatalf("ActiveSessionID = %q, want session-live", snapshot.Activity.ActiveSessionID)
+	}
+	if !snapshot.Activity.CurrentSessionBusy {
+		t.Fatal("expected CurrentSessionBusy=true")
+	}
+}

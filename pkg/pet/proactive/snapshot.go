@@ -22,6 +22,10 @@ type SnapshotDependencies struct {
 	UserProfileManager *userprofile.Manager
 	CharacterProvider  *characters.Manager
 	LastPushAt         func() time.Time
+	ActiveSessionID    func() string
+	CurrentSessionBusy func(time.Time) bool
+	ConsoleVisible     func() bool
+	PetVisible         func() bool
 }
 
 // BuildSnapshot 把“当前和主动性有关的状态”统一收敛成一个 Snapshot。
@@ -89,6 +93,18 @@ func BuildSnapshot(now time.Time, deps SnapshotDependencies) Snapshot {
 	// 最后补最近一次主动触达时间，供冷却使用。
 	if deps.LastPushAt != nil {
 		snap.Activity.LastPushAt = deps.LastPushAt()
+	}
+	if deps.ActiveSessionID != nil {
+		snap.Activity.ActiveSessionID = deps.ActiveSessionID()
+	}
+	if deps.CurrentSessionBusy != nil {
+		snap.Activity.CurrentSessionBusy = deps.CurrentSessionBusy(now)
+	}
+	if deps.ConsoleVisible != nil {
+		snap.Activity.ConsoleVisible = deps.ConsoleVisible()
+	}
+	if deps.PetVisible != nil {
+		snap.Activity.PetVisible = deps.PetVisible()
 	}
 
 	// 活动记录是周报和催办的事实基础。

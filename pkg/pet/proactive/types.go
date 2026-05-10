@@ -54,6 +54,8 @@ type Snapshot struct {
 		RecentTaskCount     int       `json:"recent_task_count"`
 		UnfinishedTaskCount int       `json:"unfinished_task_count"`
 		ActiveSessionID     string    `json:"active_session_id"`
+		DeadlineJobID       string    `json:"deadline_job_id,omitempty"`
+		DeadlineRetryCount  int       `json:"deadline_retry_count,omitempty"`
 		CurrentSessionBusy  bool      `json:"current_session_busy"`
 		ConsoleVisible      bool      `json:"console_visible"`
 		PetVisible          bool      `json:"pet_visible"`
@@ -72,10 +74,10 @@ type Snapshot struct {
 // InterruptibilityDecision 专门回答一个问题：
 // “这个用户现在适不适合被打扰？”
 type InterruptibilityDecision struct {
-	Interruptible bool                  `json:"interruptible"`
-	Level         InterruptibilityLevel `json:"level"`
-	ReasonCodes   []string              `json:"reason_codes"`
-	NextCheckAfter time.Duration        `json:"next_check_after"`
+	Interruptible  bool                  `json:"interruptible"`
+	Level          InterruptibilityLevel `json:"level"`
+	ReasonCodes    []string              `json:"reason_codes"`
+	NextCheckAfter time.Duration         `json:"next_check_after"`
 }
 
 // PolicyDecision 则回答另一个问题：
@@ -85,10 +87,11 @@ type InterruptibilityDecision struct {
 // - Interruptibility：用户此刻合不合适被打扰
 // - Policy：这次事件是否符合全局冷却、优先级等约束
 type PolicyDecision struct {
-	Allowed       bool          `json:"allowed"`
-	DeliveryLevel DeliveryLevel `json:"delivery_level"`
-	Score         int           `json:"score"`
-	ReasonCodes   []string      `json:"reason_codes"`
+	Allowed        bool          `json:"allowed"`
+	DeliveryLevel  DeliveryLevel `json:"delivery_level"`
+	Score          int           `json:"score"`
+	ReasonCodes    []string      `json:"reason_codes"`
+	NextRetryAfter time.Duration `json:"next_retry_after,omitempty"`
 }
 
 // DeliveryHistoryRecord 记录一次“已经成功投递出去”的主动事件，

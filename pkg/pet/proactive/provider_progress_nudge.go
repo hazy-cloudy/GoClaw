@@ -2,8 +2,6 @@ package proactive
 
 import (
 	"fmt"
-	"math"
-	"sort"
 	"strings"
 	"time"
 
@@ -12,7 +10,7 @@ import (
 
 type ProgressNudgeProvider struct {
 	activityStore *activity.Store
-	history *HistoryStore
+	history       *HistoryStore
 }
 
 func NewProgressNudgeProvider(activityStore *activity.Store, history *HistoryStore) *ProgressNudgeProvider {
@@ -33,12 +31,16 @@ func (p *ProgressNudgeProvider) Evaluate(snapshot Snapshot) (*Intent, bool, erro
 	if snapshot.Activity.UnfinishedTaskCount <= 0 {
 		return nil, false, nil
 	}
+	if snapshot.EvaluationReason != "task_deadline" && !strings.HasPrefix(snapshot.EvaluationReason, "task_deadline:") {
+		return nil, false, nil
+	}
 
 	task, reminderCount, err := p.pickReminderCandidate(snapshot)
 	if err != nil || task == nil {
 		return nil, false, err
 	}
 	dueAt := resolveTaskDueAt(task)
+	deadlineDue := !dueAt.IsZero() && !dueAt.After(snapshot.Now)
 
 	nudgeID := fmt.Sprintf("%s-%d", task.ID, reminderCount+1)
 	title := strings.TrimSpace(task.Title)
@@ -49,15 +51,17 @@ func (p *ProgressNudgeProvider) Evaluate(snapshot Snapshot) (*Intent, bool, erro
 	return &Intent{
 		Type:        "progress_nudge",
 		Priority:    "low",
-		ReasonCodes: []string{"unfinished_tasks", "time_distance_ready"},
+		ReasonCodes: []string{"unfinished_tasks", "deadline_due"},
 		Payload: map[string]any{
 			"nudge_id":       nudgeID,
 			"event_id":       task.ID,
 			"topic":          title,
-			"summary":        buildProgressSummary(task, snapshot.Now, dueAt, reminderCount),
-			"suggestion":     buildProgressSuggestion(task, snapshot.Now, dueAt, reminderCount),
+			"summary":        buildProgressSummary(task, snapshot.Now, dueAt),
+			"suggestion":     buildProgressSuggestion(task, snapshot.Now, dueAt),
 			"pending_cnt":    snapshot.Activity.UnfinishedTaskCount,
 			"reminder_count": reminderCount + 1,
+			"deadline_due":   deadlineDue,
+			"delay_count":    snapshot.Activity.DeadlineRetryCount,
 		},
 	}, true, nil
 }
@@ -82,11 +86,12 @@ func (p *ProgressNudgeProvider) pickReminderCandidateFromStore(snapshot Snapshot
 	if err != nil {
 		return nil, 0, err
 	}
+
 	var selected *activity.Event
 	selectedReminderCount := 0
-	selectedWait := time.Duration(math.MaxInt64)
-	selectedEligibleAt := time.Time{}
+	selectedDueAt := time.Time{}
 	selectedSameSession := false
+
 	for _, ev := range events {
 		if ev == nil || ev.Type != activity.EventTaskResult {
 			continue
@@ -100,91 +105,43 @@ func (p *ProgressNudgeProvider) pickReminderCandidateFromStore(snapshot Snapshot
 		if isRecurringTask(ev) {
 			continue
 		}
+		if snapshot.Activity.DeadlineJobID != "" {
+			jobID, _ := ev.Meta["job_id"].(string)
+			if jobID != snapshot.Activity.DeadlineJobID {
+				continue
+			}
+		}
 
 		dueAt := resolveTaskDueAt(ev)
-		firstDelay := firstReminderDelay(snapshot.Now.Sub(ev.CreatedAt), dueAt.Sub(ev.CreatedAt))
-		if firstDelay <= 0 {
-			firstDelay = 20 * time.Minute
+		if dueAt.IsZero() || dueAt.After(snapshot.Now) {
+			continue
 		}
-		reminderCount := 0
-		var deliveries []DeliveryHistoryRecord
+
+		reminderCount := snapshot.Activity.DeadlineRetryCount
 		if p.history != nil {
 			records, err := p.history.FindByEvent("progress_nudge", ev.ID, snapshot.Pet.CharacterID, ev.SessionID)
 			if err != nil {
 				return nil, 0, err
 			}
-			deliveries = records
-			sort.Slice(deliveries, func(i, j int) bool {
-				return deliveries[i].DeliveredAt.Before(deliveries[j].DeliveredAt)
-			})
-			reminderCount = len(deliveries)
+			if len(records) > 0 {
+				continue
+			}
 		}
-		if reminderCount >= 3 {
-			continue
-		}
-		if shouldSkipMiddleReminder(ev, dueAt, deliveries, snapshot.Activity.LastUserMessageAt) {
-			continue
-		}
-
-		var eligibleAt time.Time
-		if reminderCount == 0 {
-			eligibleAt = ev.CreatedAt.Add(firstDelay)
-		} else if reminderCount == 2 {
-			eligibleAt = dueAt
-		} else {
-			lastDeliveredAt := deliveries[reminderCount-1].DeliveredAt
-			backoff := firstDelay * time.Duration(1<<reminderCount)
-			eligibleAt = lastDeliveredAt.Add(backoff)
-		}
-		if !dueAt.IsZero() && eligibleAt.After(dueAt) && reminderCount < 2 {
-			eligibleAt = dueAt
-		}
-		wait := eligibleAt.Sub(snapshot.Now)
-		if wait > 0 {
+		if reminderCount > 2 {
 			continue
 		}
 
 		sameSession := snapshot.Activity.ActiveSessionID != "" && ev.SessionID == snapshot.Activity.ActiveSessionID
 		if selected == nil ||
 			(sameSession && !selectedSameSession) ||
-			(sameSession == selectedSameSession && (eligibleAt.Before(selectedEligibleAt) || (eligibleAt.Equal(selectedEligibleAt) && wait > selectedWait))) {
+			(sameSession == selectedSameSession && (selectedDueAt.IsZero() || dueAt.Before(selectedDueAt))) {
 			selected = ev
 			selectedReminderCount = reminderCount
-			selectedWait = wait
-			selectedEligibleAt = eligibleAt
+			selectedDueAt = dueAt
 			selectedSameSession = sameSession
 		}
 	}
 	return selected, selectedReminderCount, nil
-}
-
-func firstReminderDelay(age, leadTime time.Duration) time.Duration {
-	if leadTime > 0 {
-		switch {
-		case leadTime >= 30*24*time.Hour:
-			return 7 * 24 * time.Hour
-		case leadTime >= 7*24*time.Hour:
-			return 24 * time.Hour
-		case leadTime >= 24*time.Hour:
-			return 6 * time.Hour
-		case leadTime >= 6*time.Hour:
-			return 90 * time.Minute
-		default:
-			return 30 * time.Minute
-		}
-	}
-	switch {
-	case age >= 14*24*time.Hour:
-		return 24 * time.Hour
-	case age >= 7*24*time.Hour:
-		return 12 * time.Hour
-	case age >= 24*time.Hour:
-		return 6 * time.Hour
-	case age >= 6*time.Hour:
-		return 90 * time.Minute
-	default:
-		return 30 * time.Minute
-	}
 }
 
 func resolveTaskDueAt(ev *activity.Event) time.Time {
@@ -216,44 +173,17 @@ func isRecurringTask(ev *activity.Event) bool {
 	return false
 }
 
-func shouldSkipMiddleReminder(ev *activity.Event, dueAt time.Time, deliveries []DeliveryHistoryRecord, lastUserMessageAt time.Time) bool {
-	if ev == nil || len(deliveries) != 1 || lastUserMessageAt.IsZero() {
-		return false
-	}
-	firstDeliveredAt := deliveries[0].DeliveredAt
-	if !lastUserMessageAt.After(firstDeliveredAt) {
-		return false
-	}
-	if dueAt.IsZero() {
-		return true
-	}
-	return lastUserMessageAt.Before(dueAt)
-}
-
-func buildProgressSummary(ev *activity.Event, now, dueAt time.Time, reminderCount int) string {
+func buildProgressSummary(ev *activity.Event, now, dueAt time.Time) string {
 	title := progressTopic(ev)
-	if !dueAt.IsZero() && dueAt.After(now) {
-		return fmt.Sprintf("%s 还有 %s 就到时间点了。", title, formatHumanDuration(dueAt.Sub(now)))
-	}
 	if !dueAt.IsZero() && !dueAt.After(now) {
-		return fmt.Sprintf("%s 现在已经到时间点了。", title)
+		return fmt.Sprintf("%s 已经到时间点了。", title)
 	}
-	return fmt.Sprintf("%s 还没有收口。", title)
+	return fmt.Sprintf("%s 该处理了。", title)
 }
 
-func buildProgressSuggestion(ev *activity.Event, now, dueAt time.Time, reminderCount int) string {
+func buildProgressSuggestion(ev *activity.Event, now, dueAt time.Time) string {
 	title := progressTopic(ev)
-	if !dueAt.IsZero() && dueAt.After(now) {
-		remaining := formatHumanDuration(dueAt.Sub(now))
-		if reminderCount == 0 {
-			return fmt.Sprintf("记得在 %s 内把 %s 提前准备好。", remaining, title)
-		}
-		return fmt.Sprintf("离 %s 只剩 %s 了，最后再检查一下吧。", title, remaining)
-	}
-	if reminderCount == 0 {
-		return fmt.Sprintf("要不要先把 %s 收一下？", title)
-	}
-	return fmt.Sprintf("%s 我就再提醒这一次，要不要顺手把它收掉？", title)
+	return fmt.Sprintf("记得把 %s 收一下，别错过最后时间。", title)
 }
 
 func progressTopic(ev *activity.Event) string {
@@ -265,30 +195,4 @@ func progressTopic(ev *activity.Event) string {
 		return title
 	}
 	return "这件事"
-}
-
-func formatHumanDuration(d time.Duration) string {
-	if d <= 0 {
-		return "现在"
-	}
-	if d >= 24*time.Hour {
-		days := int(d / (24 * time.Hour))
-		if days == 1 {
-			return "1 天"
-		}
-		return fmt.Sprintf("%d 天", days)
-	}
-	if d >= time.Hour {
-		hours := int(d / time.Hour)
-		mins := int((d % time.Hour) / time.Minute)
-		if mins == 0 {
-			return fmt.Sprintf("%d 小时", hours)
-		}
-		return fmt.Sprintf("%d 小时 %d 分钟", hours, mins)
-	}
-	mins := int(d / time.Minute)
-	if mins <= 0 {
-		return "不到 1 分钟"
-	}
-	return fmt.Sprintf("%d 分钟", mins)
 }
