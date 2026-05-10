@@ -28,6 +28,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/pet/userprofile"
 	"github.com/sipeed/picoclaw/pkg/pet/voice"
 	"github.com/sipeed/picoclaw/pkg/providers"
+	"github.com/sipeed/picoclaw/pkg/tools"
 )
 
 type PushHandler func(push any)
@@ -53,7 +54,10 @@ type PetService struct {
 	activityStore      *activity.Store
 	proactiveManager   *proactive.Manager
 
-	connSessions map[string]string
+	connSessions        map[string]string
+	activeSessionID     string
+	activeCharacterID   string
+	lastSessionActiveAt time.Time
 
 	mu sync.RWMutex
 
@@ -230,13 +234,14 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 		}
 		// proactiveManager 是主动性系统的总入口。
 		// 当前先把快照、可打扰判断、policy 这几层底座跑通。
+		historyStore := proactive.NewHistoryStore(workspacePath)
 		providers := []proactive.Provider{
 			proactive.NewWeeklyReportProvider(s.activityStore, proactive.NewWeeklyReportStateStore(workspacePath)),
-			proactive.NewProgressNudgeProvider(),
+			proactive.NewProgressNudgeProvider(s.activityStore, historyStore),
 		}
 		s.proactiveManager = proactive.NewManager(
-			proactive.NewHistoryStore(workspacePath),
-			func() proactive.Snapshot {
+			historyStore,
+			func(reason string) proactive.Snapshot {
 				return proactive.BuildSnapshot(time.Now(), proactive.SnapshotDependencies{
 					ActivityStore:      s.activityStore,
 					ConfigManager:      s.configManager,
@@ -247,6 +252,12 @@ func NewPetService(msgBus *bus.MessageBus, cfg PetServiceConfig) (*PetService, e
 							return time.Time{}
 						}
 						return s.proactiveManager.LastPushAt()
+					},
+					ActiveSessionID: func() string {
+						return s.resolveActiveDeliverySession()
+					},
+					CurrentSessionBusy: func(now time.Time) bool {
+						return s.isCurrentSessionBusy(now)
 					},
 				})
 			},
@@ -364,6 +375,38 @@ func (s *PetService) Push(push any) {
 	}
 }
 
+func (s *PetService) recordToolCallActivity(sessionID, tool string, args map[string]any) {
+	if s == nil || s.activityStore == nil || s.charManager == nil || tool == "" {
+		return
+	}
+	charID := s.charManager.GetCurrentID()
+	if charID == "" {
+		return
+	}
+	if err := s.activityStore.Append(activity.BuildToolCallEvent(charID, sessionID, tool, args)); err != nil {
+		logger.WarnCF("pet", "PetService: failed to append tool call activity", map[string]any{
+			"tool":  tool,
+			"error": err.Error(),
+		})
+	}
+}
+
+func (s *PetService) recordToolResultActivity(sessionID, tool string, result *tools.ToolResult) {
+	if s == nil || s.activityStore == nil || s.charManager == nil || tool == "" || result == nil {
+		return
+	}
+	charID := s.charManager.GetCurrentID()
+	if charID == "" {
+		return
+	}
+	if err := s.activityStore.Append(activity.BuildToolResultEvent(charID, sessionID, tool, result)); err != nil {
+		logger.WarnCF("pet", "PetService: failed to append tool result activity", map[string]any{
+			"tool":  tool,
+			"error": err.Error(),
+		})
+	}
+}
+
 func (s *PetService) recordUserActivity(sessionID, text string) {
 	if s.activityStore == nil || s.charManager == nil {
 		return
@@ -464,6 +507,64 @@ func (s *PetService) GetSessionByConnID(connID string) string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.connSessions[connID]
+}
+
+func (s *PetService) markSessionInteraction(sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.activeSessionID = sessionID
+	s.lastSessionActiveAt = time.Now()
+	if s.charManager != nil {
+		s.activeCharacterID = s.charManager.GetCurrentID()
+	}
+}
+
+func (s *PetService) resolveActiveDeliverySession() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.activeSessionID == "" {
+		return ""
+	}
+	if s.activeCharacterID != "" && s.charManager != nil && s.charManager.GetCurrentID() != s.activeCharacterID {
+		return ""
+	}
+	return s.activeSessionID
+}
+
+func (s *PetService) ResolveReminderDeliverySession() string {
+	return s.resolveActiveDeliverySession()
+}
+
+func (s *PetService) isCurrentSessionBusy(now time.Time) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.activeSessionID == "" || s.lastSessionActiveAt.IsZero() {
+		return false
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	return now.Sub(s.lastSessionActiveAt) < 90*time.Second
+}
+
+func (s *PetService) EvaluateTaskDeadlineReminder(sessionID string, jobID string, retryCount int) proactive.EvaluationResult {
+	if sessionID != "" {
+		s.markSessionInteraction(sessionID)
+	}
+	if s == nil || s.proactiveManager == nil {
+		return proactive.EvaluationResult{}
+	}
+	reason := "task_deadline"
+	if jobID != "" {
+		reason = "task_deadline:" + jobID
+		if retryCount > 0 {
+			reason += fmt.Sprintf(":%d", retryCount)
+		}
+	}
+	return s.proactiveManager.EvaluateNow(reason)
 }
 
 func (s *PetService) PushInitStatus(sessionID string) {
