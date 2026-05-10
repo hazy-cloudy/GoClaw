@@ -990,7 +990,6 @@ func (s *PetService) handleUserProfileUpdate(sessionID string, req Request) erro
 
 	return s.sendResponse(sessionID, req.Action, map[string]string{"status": "ok"})
 }
-
 func (s *PetService) sendResponse(sessionID, action string, data interface{}) error {
 	rawData, err := json.Marshal(data)
 	if err != nil {
@@ -2504,6 +2503,139 @@ func (s *PetService) handleVoiceConfigUpdate(sessionID string, req Request) erro
 	return s.sendResponse(sessionID, req.Action, map[string]string{"status": "ok"})
 }
 
+func (s *PetService) handleDebugWeeklyReport(sessionID string, req Request) error {
+	if s.activityStore == nil || s.charManager == nil {
+		return s.sendError(sessionID, req.Action, "activity store not initialized")
+	}
+	s.markSessionInteraction(sessionID)
+
+	charID := s.charManager.GetCurrentID()
+	now := time.Now()
+	seedEvents := []*activity.Event{
+		{
+			ID:          activity.NewID(),
+			CharacterID: charID,
+			SessionID:   sessionID,
+			Type:        activity.EventUserMessage,
+			Category:    activity.CategoryDoc,
+			Status:      activity.StatusDone,
+			Title:       "整理主动性周报",
+			Summary:     "整理主动性周报",
+			CreatedAt:   now.Add(-2 * time.Hour),
+		},
+		{
+			ID:          activity.NewID(),
+			CharacterID: charID,
+			SessionID:   sessionID,
+			Type:        activity.EventTaskResult,
+			Category:    activity.CategoryCode,
+			Status:      activity.StatusDone,
+			Title:       "完成打包修复",
+			Summary:     "完成打包修复",
+			CreatedAt:   now.Add(-90 * time.Minute),
+		},
+		{
+			ID:          activity.NewID(),
+			CharacterID: charID,
+			SessionID:   sessionID,
+			Type:        activity.EventTaskResult,
+			Category:    activity.CategoryDoc,
+			Status:      activity.StatusPending,
+			Title:       "补充联调文档",
+			Summary:     "补充联调文档",
+			CreatedAt:   now.Add(-30 * time.Minute),
+		},
+	}
+	for _, ev := range seedEvents {
+		if err := s.activityStore.Append(ev); err != nil {
+			return s.sendError(sessionID, req.Action, err.Error())
+		}
+	}
+
+	snapshot := proactive.BuildSnapshot(now, proactive.SnapshotDependencies{
+		ActivityStore:      s.activityStore,
+		ConfigManager:      s.configManager,
+		UserProfileManager: s.userProfileManager,
+		CharacterProvider:  s.charManager,
+		LastPushAt: func() time.Time {
+			if s.proactiveManager == nil {
+				return time.Time{}
+			}
+			return s.proactiveManager.LastPushAt()
+		},
+	})
+	snapshot.EvaluationReason = "user_message"
+
+	provider := proactive.NewWeeklyReportProvider(
+		s.activityStore,
+		proactive.NewWeeklyReportStateStore(s.WorkspacePath()),
+	)
+	intent, ok, err := provider.Evaluate(snapshot)
+	if err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+	if !ok || intent == nil {
+		return s.sendError(sessionID, req.Action, "weekly report provider did not produce intent")
+	}
+	if err := s.deliverProactiveIntent(*intent, proactive.DeliveryCard); err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+	return s.sendResponse(sessionID, req.Action, map[string]string{"status": "ok"})
+}
+
+func (s *PetService) handleDebugProgressNudge(sessionID string, req Request) error {
+	if s.activityStore == nil || s.charManager == nil {
+		return s.sendError(sessionID, req.Action, "activity store not initialized")
+	}
+	s.markSessionInteraction(sessionID)
+
+	charID := s.charManager.GetCurrentID()
+	now := time.Now()
+	ev := &activity.Event{
+		ID:          activity.NewID(),
+		CharacterID: charID,
+		SessionID:   sessionID,
+		Type:        activity.EventTaskResult,
+		Category:    activity.CategoryCode,
+		Status:      activity.StatusPending,
+		Title:       "还有一段逻辑没收口",
+		Summary:     "还有一段逻辑没收口",
+		CreatedAt:   now.Add(-15 * time.Minute),
+	}
+	if err := s.activityStore.Append(ev); err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+
+	snapshot := proactive.BuildSnapshot(now, proactive.SnapshotDependencies{
+		ActivityStore:      s.activityStore,
+		ConfigManager:      s.configManager,
+		UserProfileManager: s.userProfileManager,
+		CharacterProvider:  s.charManager,
+		LastPushAt: func() time.Time {
+			if s.proactiveManager == nil {
+				return time.Time{}
+			}
+			return s.proactiveManager.LastPushAt()
+		},
+	})
+	snapshot.EvaluationReason = "user_message"
+
+	provider := proactive.NewProgressNudgeProvider(
+		s.activityStore,
+		proactive.NewHistoryStore(s.WorkspacePath()),
+	)
+	intent, ok, err := provider.Evaluate(snapshot)
+	if err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+	if !ok || intent == nil {
+		return s.sendError(sessionID, req.Action, "progress nudge provider did not produce intent")
+	}
+	if err := s.deliverProactiveIntent(*intent, proactive.DeliveryBubble); err != nil {
+		return s.sendError(sessionID, req.Action, err.Error())
+	}
+	return s.sendResponse(sessionID, req.Action, map[string]string{"status": "ok"})
+}
 // ensureDefaultActions 注册内置默认动作（仅在同名动作不存在时注册）
 // 这些动作对应 /pets/ 目录下的 GIF 文件，为 LLM 提供语义化动作选项。
 func ensureDefaultActions(mgr *action.ActionManager) {
