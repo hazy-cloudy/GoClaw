@@ -179,7 +179,7 @@ func FindPicoclawBinary() (string, error) {
 	if cwd, err := os.Getwd(); err == nil {
 		candidate := filepath.Join(cwd, binaryName)
 		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return candidate
+			return candidate, nil
 		}
 	}
 
