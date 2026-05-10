@@ -153,14 +153,14 @@ func topHour(counts map[int]int) int {
 
 func buildSummary(report WeeklyReport) string {
 	if len(report.TopCategories) == 0 {
-		return "杩欏懆浣跨敤杩樹笉澶氾紝鎴戝厛璁颁笅浜嗭紝绛変綘澶氫娇鍞ゆ垜涓€鐐瑰啀鏉ョ粰浣犲仛鍍忔牱鐨勫洖椤俱€?"
+		return "这周活动还不多，不过已经开始积累记录啦，接下来我们可以一起把节奏慢慢跑起来。"
 	}
 	secondCategory := report.TopCategories[0].Name
 	if len(report.TopCategories) > 1 {
 		secondCategory = report.TopCategories[1].Name
 	}
 	return fmt.Sprintf(
-		"杩欏懆浣犱竴鍏辫鎴戝嚭鎵?%d 娆★紝瀹屾垚鐜?%d%%锛屾椿璺?%d 澶╋紝涓昏闆嗕腑鍦?%s銆?%s 杩欏嚑绫讳簨鎯呬笂銆?",
+		"这周一共推进了 %d 项任务，完成率约 %d%%，活跃了 %d 天，重点内容主要集中在 %s 和 %s。",
 		report.TaskCount,
 		report.CompletionRate,
 		report.ActiveDays,

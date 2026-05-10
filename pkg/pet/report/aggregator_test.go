@@ -1,6 +1,7 @@
 package report
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -69,5 +70,8 @@ func TestAggregateWeeklyReport(t *testing.T) {
 	}
 	if report.FirstActiveAt == nil || report.LastActiveAt == nil {
 		t.Fatal("expected first/last active timestamps")
+	}
+	if !strings.Contains(report.Summary, "这周一共推进了 2 项任务") {
+		t.Fatalf("Summary = %q, want readable Chinese summary", report.Summary)
 	}
 }
