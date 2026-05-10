@@ -433,7 +433,30 @@ func (s *PetService) RegisterSession(connID, sessionID string) {
 
 func (s *PetService) UnregisterSession(connID string) {
 	s.mu.Lock()
+	sessionID := s.connSessions[connID]
 	delete(s.connSessions, connID)
+	if len(s.connSessions) == 0 {
+		s.activeSessionID = ""
+		s.activeCharacterID = ""
+		s.lastSessionActiveAt = time.Time{}
+		s.mu.Unlock()
+		return
+	}
+	if sessionID != "" && s.activeSessionID == sessionID {
+		s.activeSessionID = ""
+		s.activeCharacterID = ""
+		s.lastSessionActiveAt = time.Time{}
+		for _, candidateSessionID := range s.connSessions {
+			if candidateSessionID == "" {
+				continue
+			}
+			s.activeSessionID = candidateSessionID
+			if s.charManager != nil {
+				s.activeCharacterID = s.charManager.GetCurrentID()
+			}
+			break
+		}
+	}
 	s.mu.Unlock()
 }
 

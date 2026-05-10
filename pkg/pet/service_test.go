@@ -270,3 +270,27 @@ func TestTriggerTaskDeadlineReminderDoesNotRefreshBusySession(t *testing.T) {
 		t.Fatalf("lastSessionActiveAt changed from %v to %v, want unchanged", before, service.lastSessionActiveAt)
 	}
 }
+
+func TestUnregisterSessionDropsStaleActiveSession(t *testing.T) {
+	service := &PetService{
+		connSessions: map[string]string{
+			"conn-1": "session-1",
+			"conn-2": "session-2",
+		},
+		activeSessionID:     "session-1",
+		activeCharacterID:   "pet_001",
+		lastSessionActiveAt: time.Now(),
+	}
+
+	service.UnregisterSession("conn-1")
+
+	if service.activeSessionID == "session-1" {
+		t.Fatal("expected stale active session to be cleared or replaced")
+	}
+	if service.activeSessionID == "" {
+		t.Fatal("expected remaining live session to become active")
+	}
+	if service.activeSessionID != "session-2" {
+		t.Fatalf("activeSessionID = %q, want session-2", service.activeSessionID)
+	}
+}

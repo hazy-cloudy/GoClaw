@@ -166,6 +166,11 @@ func (l *ConfigLoader) Load() error {
 	if cfg.Voice == nil {
 		cfg.Voice = DefaultVoiceConfig()
 	}
+	fmt.Printf("[DEBUG ConfigLoader] Loaded PetConfig, Voice.ASRModelList len=%d\n",
+		len(cfg.Voice.ASRModelList))
+	for i, m := range cfg.Voice.ASRModelList {
+		fmt.Printf("[DEBUG ConfigLoader]   ASRModel[%d]: name=%s, provider=%s\n", i, m.Name, m.Provider)
+	}
 	if cfg.App == nil {
 		cfg.App = DefaultAppConfig()
 	} else {
