@@ -45,7 +45,9 @@ func (e *PolicyEngine) Evaluate(snapshot Snapshot, interruptibility Interruptibi
 	if cooldown <= 0 {
 		cooldown = 90 * time.Minute
 	}
-	if !snapshot.Activity.LastPushAt.IsZero() && now.Sub(snapshot.Activity.LastPushAt) < cooldown {
+	if snapshot.Activity.DeadlineRetryCount < 2 &&
+		!snapshot.Activity.LastPushAt.IsZero() &&
+		now.Sub(snapshot.Activity.LastPushAt) < cooldown {
 		return PolicyDecision{
 			Allowed:       false,
 			DeliveryLevel: DeliveryBlocked,

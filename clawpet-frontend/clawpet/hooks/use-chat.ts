@@ -97,6 +97,38 @@ interface ProgressNudgeEventData {
   nudge_id?: string
 }
 
+function buildProgressNudgeBubbleText(data: ProgressNudgeEventData): string {
+  const summary = data.summary?.trim() || ""
+  if (summary) {
+    return summary
+  }
+  const suggestion = data.suggestion?.trim() || ""
+  if (suggestion) {
+    return suggestion
+  }
+  const topic = data.topic?.trim() || ""
+  if (topic) {
+    return `${topic} 记得看一眼`
+  }
+  return ""
+}
+
+function buildProgressNudgeMessageText(data: ProgressNudgeEventData): string {
+  const summary = data.summary?.trim() || ""
+  if (summary) {
+    return summary
+  }
+  const suggestion = data.suggestion?.trim() || ""
+  if (suggestion) {
+    return suggestion
+  }
+  const topic = data.topic?.trim() || ""
+  if (topic) {
+    return `${topic} 记得看一眼`
+  }
+  return "有到点的提醒啦，记得看一眼哦。"
+}
+
 const EMPTY_SESSION_TITLE = "新对话"
 
 function generateChatSessionKey(): string {
@@ -1041,6 +1073,34 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
             lastActionRef.current = event.data.trim()
           }
           break
+
+        case "progress_nudge": {
+          const data = (event.data || {}) as ProgressNudgeEventData
+          const bubbleText = buildProgressNudgeBubbleText(data)
+          const messageText = buildProgressNudgeMessageText(data)
+          if (bubbleText) {
+            showBubble(bubbleText)
+          }
+          if (messageText) {
+            const timestamp = Date.now()
+            const messageId = data.nudge_id?.trim()
+              ? `progress-nudge-${data.nudge_id.trim()}`
+              : `progress-nudge-${timestamp}`
+            const message: ChatMessage = {
+              id: messageId,
+              role: "assistant",
+              content: messageText,
+              timestamp,
+              streaming: false,
+            }
+            updateSessionMessages(activeSessionIdRef.current, (prev) =>
+              mergeMessage(prev, message),
+            )
+            lastAssistantTextRef.current = messageText
+            optionsRef.current.onMessage?.(message)
+          }
+          break
+        }
       }
     }
 

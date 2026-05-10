@@ -28,15 +28,18 @@ type DeliveryTargetResolver func(
 	chatID string,
 ) (resolvedChannel string, resolvedChatID string, err error)
 
+type OneTimePetDeadlineHandler func(ctx context.Context, job *cron.CronJob, chatID string) (bool, error)
+
 // CronTool provides scheduling capabilities for the agent
 type CronTool struct {
-	cronService            *cron.CronService
-	executor               JobExecutor
-	msgBus                 *bus.MessageBus
-	execTool               *ExecTool
-	allowCommand           bool
-	execEnabled            bool
-	deliveryTargetResolver DeliveryTargetResolver
+	cronService               *cron.CronService
+	executor                  JobExecutor
+	msgBus                    *bus.MessageBus
+	execTool                  *ExecTool
+	allowCommand              bool
+	execEnabled               bool
+	deliveryTargetResolver    DeliveryTargetResolver
+	oneTimePetDeadlineHandler OneTimePetDeadlineHandler
 }
 
 // NewCronTool creates a new CronTool
@@ -81,6 +84,10 @@ func (t *CronTool) Name() string {
 
 func (t *CronTool) SetDeliveryTargetResolver(resolver DeliveryTargetResolver) {
 	t.deliveryTargetResolver = resolver
+}
+
+func (t *CronTool) SetOneTimePetDeadlineHandler(handler OneTimePetDeadlineHandler) {
+	t.oneTimePetDeadlineHandler = handler
 }
 
 // Description returns the tool description
@@ -326,6 +333,16 @@ func (t *CronTool) ExecuteJob(ctx context.Context, job *cron.CronJob) (string, e
 		}
 		if resolvedChatID != "" {
 			chatID = resolvedChatID
+		}
+	}
+
+	if job != nil && channel == "pet" && job.Schedule.Kind == "at" && t.oneTimePetDeadlineHandler != nil {
+		handled, err := t.oneTimePetDeadlineHandler(ctx, job, chatID)
+		if err != nil {
+			return "", err
+		}
+		if handled {
+			return "ok", nil
 		}
 	}
 
