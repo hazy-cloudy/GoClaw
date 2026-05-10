@@ -87,6 +87,8 @@ export interface UserProfileUpdateData {
   extra?: Record<string, unknown>
 }
 
+export interface UserProfileData extends UserProfileUpdateData {}
+
 interface PendingActionRequest {
   action: string
   resolve: (resp: PetResponse) => void
@@ -1194,6 +1196,10 @@ export class PicoClawWebSocket {
 
   async updateUserProfile(data: UserProfileUpdateData): Promise<PetResponse> {
     return this.requestAction("user_profile_update", data)
+  }
+
+  async getUserProfile(): Promise<PetResponse & { data?: UserProfileData }> {
+    return this.requestAction<UserProfileData>("user_profile_get", {})
   }
 
   async submitOnboardingConfig(data: {

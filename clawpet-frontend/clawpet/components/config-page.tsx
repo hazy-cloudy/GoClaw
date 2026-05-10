@@ -30,6 +30,7 @@ import {
   type Config,
   type VoiceModelData,
   type ASRModelData,
+  type UserProfileData,
 } from "@/lib/api"
 import { openOnboardingPopup } from "@/lib/onboarding"
 import { cn } from "@/lib/utils"
@@ -130,14 +131,15 @@ function mapConfigToForm(config?: Config): ConfigFormState {
 function mapCharacterToPersonalityForm(
   character?: CharacterProfileData,
   config?: { language?: string; emotion_enabled?: boolean },
+  userProfile?: UserProfileData,
 ): PersonalityFormState {
   return {
     petId: character?.pet_id ?? "",
     petName: character?.pet_name ?? "",
     petPersona: character?.pet_persona ?? "",
     petPersonaType: character?.pet_persona_type ?? "gentle",
-    personalityTone: character?.pet_persona ?? "正常",
-    language: config?.language ?? "zh-CN",
+    personalityTone: userProfile?.personality_tone ?? "正常",
+    language: userProfile?.language ?? config?.language ?? "zh-CN",
     emotionEnabled: config?.emotion_enabled ?? true,
   }
 }
@@ -223,9 +225,10 @@ export function ConfigPage() {
       setPersonalityState(null)
       try {
         const ws = getWebSocketInstance()
-        const [characterResp, petConfigResp] = await Promise.all([
+        const [characterResp, petConfigResp, userProfileResp] = await Promise.all([
           ws.getCharacter(),
           ws.getPetConfig(),
+          ws.getUserProfile(),
         ])
 
         if (cancelled) {
@@ -235,6 +238,7 @@ export function ConfigPage() {
         const nextForm = mapCharacterToPersonalityForm(
           characterResp.data,
           petConfigResp.data,
+          userProfileResp.data,
         )
         setPersonalityForm(nextForm)
         setPersonalityBaseline(nextForm)
@@ -412,9 +416,11 @@ export function ConfigPage() {
 
       const refreshedCharacter = await ws.getCharacter()
       const refreshedConfig = await ws.getPetConfig()
+      const refreshedUserProfile = await ws.getUserProfile()
       const nextForm = mapCharacterToPersonalityForm(
         refreshedCharacter.data,
         refreshedConfig.data,
+        refreshedUserProfile.data,
       )
       setPersonalityForm(nextForm)
       setPersonalityBaseline(nextForm)
@@ -481,6 +487,9 @@ export function ConfigPage() {
         const ws = getWebSocketInstance()
         if (voiceConfig.defaultVoiceModel) {
           await ws.setDefaultVoiceModel(voiceConfig.defaultVoiceModel)
+        }
+        if (voiceConfig.defaultAsrModel) {
+          await ws.setDefaultASRModel(voiceConfig.defaultAsrModel)
         }
       }
 
@@ -1313,7 +1322,7 @@ export function ConfigPage() {
           onClose={() => setShowVoiceModelsPanel(false)}
           onChanged={() => {
             void loadVoiceConfig()
-            setHasChanges(true)
+            setHasChanges(false)
           }}
         />
       )}
@@ -1323,7 +1332,7 @@ export function ConfigPage() {
           onClose={() => setShowAsrModelsPanel(false)}
           onChanged={() => {
             void loadVoiceConfig()
-            setHasChanges(true)
+            setHasChanges(false)
           }}
         />
       )}
