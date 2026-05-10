@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -418,5 +419,43 @@ func TestConfigLoader_Load_AppMissingNewProactiveFieldsUsesDefaults(t *testing.T
 	}
 	if app.GlobalCooldownMinutes != 90 {
 		t.Fatalf("GlobalCooldownMinutes = %d, want 90", app.GlobalCooldownMinutes)
+	}
+}
+
+func TestConfigLoader_Load_MissingVoiceUsesDefaultBeforeDebugAccess(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "config-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	raw := map[string]any{
+		"characters": []map[string]any{
+			{
+				"id":           "pet_001",
+				"name":         "test",
+				"persona":      "p",
+				"persona_type": "gentle",
+			},
+		},
+		"active_id": "pet_001",
+		"app": map[string]any{
+			"emotion_enabled": true,
+		},
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, PetConfigFile), data, 0644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	loader := NewConfigLoader(tmpDir)
+	if err := loader.Load(); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if loader.GetVoice() == nil {
+		t.Fatal("GetVoice returned nil for config without voice block")
 	}
 }
