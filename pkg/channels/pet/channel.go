@@ -567,8 +567,37 @@ func (c *PetChannel) readLoop(pc *petConn) {
 
 // handleRequest 处理客户端请求
 func (c *PetChannel) handleRequest(pc *petConn, req Request) {
+	if req.Action == pet.ActionAudioDone {
+		c.handleAudioDoneRequest(pc, req)
+		return
+	}
 	logger.Infof("pet: handleRequest called, action=%s, conn_id=%s", req.Action, pc.id)
 	c.service.HandleRequest(pc.id, req)
+}
+
+func (c *PetChannel) handleAudioDoneRequest(pc *petConn, req Request) {
+	var data pet.AudioDoneRequest
+	if err := json.Unmarshal(req.Data, &data); err != nil || data.Seq <= 0 {
+		_ = pc.writeJSON(Response{
+			Status:    pet.StatusError,
+			Action:    req.Action,
+			Error:     "invalid audio_done data",
+			RequestID: req.RequestID,
+		})
+		return
+	}
+
+	streamer := getActivePetStreamer(pc.sessionID)
+	if streamer != nil {
+		streamer.HandleAudioDone(data.Seq)
+	}
+
+	_ = pc.writeJSON(Response{
+		Status:    pet.StatusOK,
+		Action:    req.Action,
+		Data:      mustMarshal(map[string]any{"received": streamer != nil, "seq": data.Seq}),
+		RequestID: req.RequestID,
+	})
 }
 
 // writeJSON 发送JSON到客户端
@@ -667,6 +696,7 @@ func (c *PetChannel) BeginStream(ctx context.Context, sessionID string) (channel
 
 	// 启动音频播放控制 goroutine
 	go streamer.audioPlayLoop()
+	setActivePetStreamer(sessionID, streamer)
 
 	return streamer, nil
 }
@@ -727,6 +757,9 @@ func (s *petStreamer) Update(ctx context.Context, content string) error {
 // 注意：不再发送重复文本，只发送情绪状态汇总
 // 流式结束后等待剩余音频发送完毕
 func (s *petStreamer) Finalize(ctx context.Context, content string) error {
+	if s != nil && s.channel != nil {
+		defer clearActivePetStreamer(s.sessionID, s)
+	}
 
 	logger.DebugCF("pet", "Finalize called", map[string]any{
 		"content": content,
@@ -792,6 +825,7 @@ func (s *petStreamer) Cancel(ctx context.Context) {
 	if s.audioQueue != nil {
 		s.audioQueue.Clear()
 	}
+	clearActivePetStreamer(s.sessionID, s)
 }
 
 // findSegment 查找第一个完整的段落（以换行或句号结尾）
@@ -1288,6 +1322,7 @@ func (s *petStreamer) sendAudioSegmentAsync(seg *voice.AudioSegment, isFinal boo
 			"seq":  seg.Seq,
 			"text": seg.Text,
 		})
+		s.HandleAudioDone(seg.Seq)
 		return
 	}
 
@@ -1303,6 +1338,7 @@ func (s *petStreamer) sendAudioSegmentAsync(seg *voice.AudioSegment, isFinal boo
 			"seq":  seg.Seq,
 			"text": seg.Text,
 		})
+		s.HandleAudioDone(seg.Seq)
 		return
 	}
 	encoded := base64.StdEncoding.EncodeToString(seg.AudioData)

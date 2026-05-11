@@ -11,6 +11,22 @@ declare global {
     duration_ms?: number
   }
 
+  interface PetRuntimeStatePayload {
+    state:
+      | "idle"
+      | "listening"
+      | "recognizing"
+      | "thinking"
+      | "tool_running"
+      | "speaking"
+      | "done"
+      | "error"
+      | "stalled"
+    text?: string
+    source?: "voice" | "chat"
+    sticky_ms?: number
+  }
+
   interface Window {
     electronAPI?: {
       openOnboarding?: () => void
@@ -34,8 +50,16 @@ declare global {
       onForceStopMedia?: (callback: () => void) => () => void
       ensureSettingsForeground?: () => Promise<{ ok: boolean; reason?: string }>
       onVoiceShortcutTriggered?: (callback: () => void) => void
+      onVoiceInputStateChanged?: (
+        callback: (payload: { phase?: string; isListening?: boolean }) => void,
+      ) => (() => void) | void
+      onPetRuntimeStateChanged?: (
+        callback: (payload: PetRuntimeStatePayload) => void,
+      ) => (() => void) | void
       registerVoiceShortcut?: (data: { enabled: boolean; keys: string }) => void
       registerPetClickThroughShortcut?: (data: { enabled: boolean; keys: string }) => void
+      reportVoiceInputState?: (data: { phase?: string; isListening?: boolean }) => void
+      reportPetRuntimeState?: (data: PetRuntimeStatePayload) => void
     }
   }
 }

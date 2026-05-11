@@ -609,6 +609,17 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     }
   }, [])
 
+  const showStatusBubble = useCallback(
+    (text: string, durationMs = 2400) => {
+      const normalized = text.trim()
+      if (!normalized || !window.electronAPI?.showBubble) {
+        return
+      }
+      showBubble(normalized, undefined, durationMs)
+    },
+    [showBubble],
+  )
+
   const scheduleAssistantBubble = useCallback(
     (text: string) => {
       const bubbleText = text.trim()
@@ -711,6 +722,9 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       const settleOnce = () => {
         if (!settled) {
           settled = true
+          if (typeof seq === "number" && Number.isFinite(seq)) {
+            wsRef.current.sendAudioDone(seq)
+          }
           onSettled?.()
         }
       }
@@ -991,6 +1005,24 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
           const parsedDuration = Number(data.duration)
           const durationMs = Number.isFinite(parsedDuration) ? parsedDuration : 0
 
+          // Pet channel audio pushes do not currently include chat_id, so the
+          // sequence resetting to 1 is our best signal that a new spoken turn
+          // has started. Reset dedupe/queue state here so later turns do not
+          // get dropped as "duplicates" because they share the same seq=1 and
+          // MP3 header prefix as the first successful reply.
+          if (seq === 1 && incomingChatId === null) {
+            if (currentAudioRef.current) {
+              currentAudioRef.current.pause()
+              currentAudioRef.current = null
+            }
+            if (currentAudioUrlRef.current) {
+              URL.revokeObjectURL(currentAudioUrlRef.current)
+              currentAudioUrlRef.current = null
+            }
+            resetAudioQueue()
+            lastPlayedAudioRef.current = { value: "", at: 0 }
+          }
+
           if (audioChunkPayload) {
             enqueueAudioSegment({
               chatId: incomingChatId,
@@ -1026,6 +1058,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
               typeof event.data === "string" ? event.data === "true" : true
             if (typing) {
               beginOrKeepAssistantTurn()
+              showStatusBubble("小猫正在思考，请耐心等待...", 2600)
             } else {
               finalizeStreamingAssistantMessages()
               endAssistantTurn()
@@ -1039,6 +1072,13 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
           if (status === "busy" || status === "done" || status === "error") {
             beginOrKeepAssistantTurn()
             setToolStatus(status)
+            if (status === "busy") {
+              showStatusBubble(data.text?.trim() || "正在调用工具...", 2600)
+            } else if (status === "done") {
+              showStatusBubble("工具完成，正在整理结果...", 1800)
+            } else {
+              showStatusBubble("工具调用失败，正在尝试恢复...", 2600)
+            }
           }
           break
         }
@@ -1060,6 +1100,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
           setError("正在重新连接...")
           finalizeStreamingAssistantMessages()
           endAssistantTurn()
+          showStatusBubble("连接中断，正在重新连接...", 2600)
           break
 
         case "emotion_change":
@@ -1139,6 +1180,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     playAudioBase64,
     resetAudioQueue,
     scheduleAssistantBubble,
+    showStatusBubble,
     showBubble,
     updateSessionMessages,
     clearAudioAdvanceTimer,

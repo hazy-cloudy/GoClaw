@@ -249,6 +249,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('voice-shortcut-triggered', () => callback());
   },
 
+  onVoiceInputStateChanged: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('voice-input-state-changed', listener);
+    return () => ipcRenderer.removeListener('voice-input-state-changed', listener);
+  },
+
+  onPetRuntimeStateChanged: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('pet-runtime-state-changed', listener);
+    return () => ipcRenderer.removeListener('pet-runtime-state-changed', listener);
+  },
+
   /**
    * 注册/更新语音输入快捷键
    * @param {object} data - 快捷键配置
@@ -257,6 +269,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
    */
   registerVoiceShortcut: (data) => {
     ipcRenderer.send('register-voice-shortcut', data);
+  },
+
+  reportVoiceInputState: (data) => {
+    ipcRenderer.send('voice-input-state', data);
+  },
+
+  reportPetRuntimeState: (data) => {
+    ipcRenderer.send('pet-runtime-state', data);
   }
 });
 

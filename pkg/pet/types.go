@@ -64,6 +64,7 @@ const (
 	ActionAudioFrame           = "audio_frame"             // 音频帧（语音输入）
 	ActionVoiceConfigGet       = "voice_config_get"        // 获取 voice 配置（model_name）
 	ActionVoiceConfigUpdate    = "voice_config_update"     // 更新 voice 配置（model_name）
+	ActionAudioDone       = "audio_done" // audio playback ack
 	PushTypeWeeklyReport  = "weekly_report_ready"
 	PushTypeProgressNudge = "progress_nudge"
 )
@@ -111,6 +112,9 @@ type Response struct {
 	RequestID string          `json:"request_id,omitempty"` // 对应的请求ID
 }
 
+type AudioDoneRequest struct {
+	Seq int64 `json:"seq"`
+}
 // Push 推送消息结构
 type Push struct {
 	Type      string          `json:"type"`      // 固定为 "push"

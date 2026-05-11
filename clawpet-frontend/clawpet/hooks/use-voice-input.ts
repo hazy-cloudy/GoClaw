@@ -9,9 +9,33 @@ interface UseVoiceInputOptions {
   onError?: (error: string) => void
   canRecord?: boolean
   sessionKey?: string
+  onRecognizingText?: (text: string) => void
 }
 
 type VoicePhase = "idle" | "recording" | "recognizing" | "error"
+
+type PetRuntimeState =
+  | "idle"
+  | "listening"
+  | "recognizing"
+  | "thinking"
+  | "tool_running"
+  | "speaking"
+  | "done"
+  | "error"
+  | "stalled"
+
+interface PetRuntimeStatePayload {
+  state: PetRuntimeState
+  text?: string
+  source?: "voice" | "chat"
+  sticky_ms?: number
+}
+
+interface VoiceBubbleOptions {
+  animation?: string
+  durationMs?: number
+}
 
 const TARGET_SAMPLE_RATE = 16000
 const FRAME_SIZE = 2048
@@ -108,7 +132,13 @@ function downsampleTo16k(input: Float32Array, sourceSampleRate: number): Float32
 }
 
 export function useVoiceInput(options: UseVoiceInputOptions = {}) {
-  const { onResult, onError, canRecord = true, sessionKey = "" } = options
+  const {
+    onResult,
+    onError,
+    onRecognizingText,
+    canRecord = true,
+    sessionKey = "",
+  } = options
   const [isListening, setIsListening] = useState(false)
   const [isSupported, setIsSupported] = useState(false)
   const [phase, setPhase] = useState<VoicePhase>("idle")
@@ -166,6 +196,27 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
   const initializingRef = useRef(false)
   const startingRef = useRef(false)
   const stoppingRef = useRef(false)
+
+  const reportPetRuntimeState = useCallback((payload: PetRuntimeStatePayload) => {
+    window.electronAPI?.reportPetRuntimeState?.({
+      source: "voice",
+      ...payload,
+    })
+  }, [])
+
+  const showVoiceBubble = useCallback((text: string, options: VoiceBubbleOptions = {}) => {
+    const normalized = text.trim()
+    if (!normalized || !window.electronAPI?.showBubble) {
+      return
+    }
+
+    window.electronAPI.showBubble({
+      text: normalized,
+      emotion: "neutral",
+      animation: options.animation,
+      duration_ms: options.durationMs,
+    })
+  }, [])
 
   const debugLog = useCallback((message: string, data?: Record<string, unknown>) => {
     if (!DEBUG_VOICE) {
@@ -739,25 +790,19 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
         return
       }
       if (event.type === "typing") {
-        if (event.data === "true" || event.data === true) {
+        if (event.data === "true") {
           startNoProgressTimeout()
-          recognizingHasResultRef.current = true
           hasReceivedAnyResponseRef.current = true
         }
       }
       if (event.type === "message" && typeof event.data === "object" && event.data) {
         const message = event.data as { role?: string; content?: string; streaming?: boolean }
         if (message.role === "assistant" && typeof message.content === "string" && message.content.trim()) {
-          recognizingHasResultRef.current = true
           hasReceivedAnyResponseRef.current = true
         }
       }
       if (event.type === "audio" && typeof event.data === "object" && event.data) {
         const audioPayload = event.data as { text?: string; is_final?: boolean }
-        if (typeof audioPayload.text === "string" && audioPayload.text.trim()) {
-          recognizingHasResultRef.current = true
-          hasReceivedAnyResponseRef.current = true
-        }
         if (audioPayload.is_final) {
           clearRecognizingTimeout()
           clearNoProgressTimeout()
@@ -768,10 +813,30 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
       if (event.type === "asr" && typeof event.data === "object" && event.data) {
         const asrPayload = event.data as { text?: string }
         if (typeof asrPayload.text === "string" && asrPayload.text.trim()) {
+          const recognizedText = asrPayload.text.trim()
           recognizingHasResultRef.current = true
           hasReceivedAnyResponseRef.current = true
+          onRecognizingText?.(recognizedText)
+          reportPetRuntimeState({
+            state: "done",
+            text: recognizedText,
+            sticky_ms: 2200,
+          })
+          showVoiceBubble(recognizedText, { durationMs: 2200 })
+          window.setTimeout(() => {
+            if (phaseRef.current === "recognizing") {
+              showVoiceBubble("小猫正在思考，请耐心等待...", {
+                durationMs: 12000,
+              })
+              reportPetRuntimeState({
+                state: "thinking",
+                text: "小猫正在思考，请耐心等待...",
+                sticky_ms: 12000,
+              })
+            }
+          }, 700)
           if (phaseRef.current === "recognizing") {
-            onResult?.(asrPayload.text)
+            onResult?.(recognizedText)
           }
         }
       }
@@ -806,7 +871,18 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
       clearRecognizingTimeout()
       clearNoProgressTimeout()
     }
-  }, [clearNoProgressTimeout, clearRecognizingTimeout, debugLog, onError, onResult, setPhaseState, startNoProgressTimeout])
+  }, [
+    clearNoProgressTimeout,
+    clearRecognizingTimeout,
+    debugLog,
+    onError,
+    onRecognizingText,
+    onResult,
+    reportPetRuntimeState,
+    setPhaseState,
+    showVoiceBubble,
+    startNoProgressTimeout,
+  ])
 
   useEffect(() => {
     if (!isSupported) {
@@ -878,22 +954,17 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
       failStart("会话未就绪，无法开始录音。")
       return
     }
+    showVoiceBubble("正在准备麦克风，再按一次结束录音", {
+      animation: "listen",
+      durationMs: 5000,
+    })
     if (!navigator?.mediaDevices?.getUserMedia) {
       failStart("当前环境不支持语音输入")
       return
     }
 
-    if (window.electronAPI?.ensureSettingsForeground) {
-      const focused = await window.electronAPI.ensureSettingsForeground()
-      if (!focused?.ok) {
-        failStart("无法激活主设置窗口，请切回主窗口后重试。")
-        return
-      }
-    }
-
-    // 移除失焦保护，允许后台录音
-    // if (document.visibilityState !== "visible") {
-    //   failStart("当前窗口不可见，无法开始语音输入，请切回主设置窗口。")
+    // 绉婚櫎澶辩劍淇濇姢锛屽厑璁稿悗鍙板綍闊?    // if (document.visibilityState !== "visible") {
+    //   failStart("褰撳墠绐楀彛涓嶅彲瑙侊紝鏃犳硶寮€濮嬭闊宠緭鍏ワ紝璇峰垏鍥炰富璁剧疆绐楀彛銆?)
     //   return
     // }
 
@@ -1135,7 +1206,7 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
       }
       setPhaseState("recording")
       setIsListening(true)
-      // 移除失焦保护，允许后台录音
+      // 绉婚櫎澶辩劍淇濇姢锛屽厑璁稿悗鍙板綍闊?
       // attachFocusGuards()
       startCaptureHealthCheck()
       debugLog("backend ready", {
@@ -1373,6 +1444,53 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
     isListeningRef.current = isListening
   }, [isListening])
 
+  useEffect(() => {
+    window.electronAPI?.reportVoiceInputState?.({
+      phase,
+      isListening,
+    })
+  }, [isListening, phase])
+
+  useEffect(() => {
+    if (phase === "recording") {
+      showVoiceBubble("正在录音，再按一次结束", {
+        animation: "listen",
+        durationMs: 30000,
+      })
+      reportPetRuntimeState({
+        state: "listening",
+        text: "正在录音，再按一次结束",
+      })
+      return
+    }
+    if (phase === "recognizing") {
+      showVoiceBubble("正在识别语音，请稍候...", {
+        animation: "listen",
+        durationMs: 20000,
+      })
+      reportPetRuntimeState({
+        state: "recognizing",
+        text: "正在识别语音，请稍候...",
+      })
+      return
+    }
+    if (phase === "error" && error) {
+      showVoiceBubble(error, {
+        animation: "shake-head",
+        durationMs: 2800,
+      })
+      reportPetRuntimeState({
+        state: "error",
+        text: error,
+        sticky_ms: 2800,
+      })
+      return
+    }
+    if (phase === "idle") {
+      reportPetRuntimeState({ state: "idle" })
+    }
+  }, [error, phase, reportPetRuntimeState, showVoiceBubble])
+
   const toggleListening = useCallback(() => {
     try {
       if (isListening) {
@@ -1388,7 +1506,7 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
           void startListening()
         })
       })
-    } catch (err) {
+      } catch (err) {
       const message = err instanceof Error ? err.message : "语音输入失败，请重试。"
       setPhaseState("error")
       setError(message)
@@ -1398,7 +1516,7 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
     }
   }, [isListening, onError, setPhaseState, startListening, stopCapture, stopListening])
 
-  // 监听全局快捷键触发的语音输入
+  // 鐩戝惉鍏ㄥ眬蹇嵎閿Е鍙戠殑璇煶杈撳叆
   useEffect(() => {
     if (!window.electronAPI?.onVoiceShortcutTriggered) {
       return
@@ -1430,3 +1548,6 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
     toggleListening,
   }
 }
+
+
+
